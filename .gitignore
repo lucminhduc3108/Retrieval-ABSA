@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+data/raw/
+data/processed/
+checkpoints/
+indexes/
+logs/
+.venv/
+*.pt
+*.faiss
+*.npy
+SemEval-Dataset/
+docs/
