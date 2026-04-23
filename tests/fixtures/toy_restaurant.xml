@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Reviews>
+    <Review rid="test_review">
+        <sentences>
+            <sentence id="explicit_case">
+                <text>The food was great</text>
+                <Opinions>
+                    <Opinion target="food" category="FOOD#QUALITY" polarity="positive" from="4" to="8"/>
+                </Opinions>
+            </sentence>
+            <sentence id="null_case">
+                <text>Overpriced and underwhelming</text>
+                <Opinions>
+                    <Opinion target="NULL" category="RESTAURANT#PRICES" polarity="negative" from="0" to="0"/>
+                </Opinions>
+            </sentence>
+            <sentence id="conflict_case">
+                <text>The pasta is hit or miss</text>
+                <Opinions>
+                    <Opinion target="pasta" category="FOOD#QUALITY" polarity="conflict" from="4" to="9"/>
+                </Opinions>
+            </sentence>
+            <sentence id="no_opinion_case">
+                <text>We went on a Tuesday night</text>
+            </sentence>
+        </sentences>
+    </Review>
+</Reviews>
