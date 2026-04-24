@@ -36,36 +36,58 @@ def test_dataset_item_has_expected_keys(tmp_path):
     assert item["anchor_input_ids"].shape == (32,)
 
 
-def test_one_step_decreases_loss(tmp_path):
+def test_training_decreases_loss(tmp_path):
+    torch.manual_seed(0)
+    triplets = [
+        {
+            "anchor_id": "a0", "anchor_sentence": "The pizza was absolutely delicious",
+            "anchor_aspect": "FOOD#QUALITY", "anchor_polarity": "positive",
+            "positive_id": "p0", "positive_sentence": "Amazing pasta and great taste",
+            "positive_aspect": "FOOD#QUALITY", "positive_polarity": "positive",
+            "neg1_id": "n1_0", "neg1_sentence": "The steak was terrible and raw",
+            "neg1_aspect": "FOOD#QUALITY", "neg1_polarity": "negative",
+            "neg2_id": "n2_0", "neg2_sentence": "Waiters were friendly and fast",
+            "neg2_aspect": "SERVICE#GENERAL", "neg2_polarity": "positive",
+        },
+        {
+            "anchor_id": "a1", "anchor_sentence": "Slow service and rude staff",
+            "anchor_aspect": "SERVICE#GENERAL", "anchor_polarity": "negative",
+            "positive_id": "p1", "positive_sentence": "The waiter ignored us completely",
+            "positive_aspect": "SERVICE#GENERAL", "positive_polarity": "negative",
+            "neg1_id": "n1_1", "neg1_sentence": "Excellent and attentive service",
+            "neg1_aspect": "SERVICE#GENERAL", "neg1_polarity": "positive",
+            "neg2_id": "n2_1", "neg2_sentence": "The soup was bland and cold",
+            "neg2_aspect": "FOOD#QUALITY", "neg2_polarity": "negative",
+        },
+    ]
     p = tmp_path / "triplets.jsonl"
-    write_jsonl([_make_triplet(i) for i in range(4)], str(p))
+    write_jsonl(triplets, str(p))
     tok = AutoTokenizer.from_pretrained("microsoft/deberta-v3-base")
     ds = ContrastiveTripletDataset(str(p), tok, max_length=32)
-    loader = torch.utils.data.DataLoader(ds, batch_size=4)
+    loader = torch.utils.data.DataLoader(ds, batch_size=2)
 
     model = ContrastiveEmbedder(proj_dim=32)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
 
     model.train()
     batch = next(iter(loader))
-    out = model(batch["anchor_input_ids"], batch["anchor_attention_mask"],
-                batch["pos_input_ids"], batch["pos_attention_mask"],
-                batch["neg1_input_ids"], batch["neg1_attention_mask"],
-                batch["neg2_input_ids"], batch["neg2_attention_mask"])
-    loss1 = infonce_loss(out["anchor_vecs"], out["pos_vecs"],
-                         negatives=[out["neg1_vecs"], out["neg2_vecs"]], tau=0.07)
 
-    optimizer.zero_grad()
-    loss1.backward()
-    optimizer.step()
+    def compute_loss():
+        out = model(batch["anchor_input_ids"], batch["anchor_attention_mask"],
+                    batch["pos_input_ids"], batch["pos_attention_mask"],
+                    batch["neg1_input_ids"], batch["neg1_attention_mask"],
+                    batch["neg2_input_ids"], batch["neg2_attention_mask"])
+        return infonce_loss(out["anchor_vecs"], out["pos_vecs"],
+                            negatives=[out["neg1_vecs"], out["neg2_vecs"]], tau=0.07)
 
-    out2 = model(batch["anchor_input_ids"], batch["anchor_attention_mask"],
-                 batch["pos_input_ids"], batch["pos_attention_mask"],
-                 batch["neg1_input_ids"], batch["neg1_attention_mask"],
-                 batch["neg2_input_ids"], batch["neg2_attention_mask"])
-    loss2 = infonce_loss(out2["anchor_vecs"], out2["pos_vecs"],
-                         negatives=[out2["neg1_vecs"], out2["neg2_vecs"]], tau=0.07)
-    assert loss2.item() < loss1.item()
+    loss_initial = compute_loss().item()
+    for _ in range(5):
+        loss = compute_loss()
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    loss_final = compute_loss().item()
+    assert loss_final < loss_initial
 
 
 def test_evaluate_recall_returns_expected_keys(tmp_path):

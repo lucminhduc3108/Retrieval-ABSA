@@ -8,7 +8,7 @@ class ContrastiveEmbedder(nn.Module):
     def __init__(self, model_name: str = "microsoft/deberta-v3-base",
                  proj_dim: int = 256, dropout: float = 0.1):
         super().__init__()
-        self.encoder = AutoModel.from_pretrained(model_name, torch_dtype=torch.float32)
+        self.encoder = AutoModel.from_pretrained(model_name, dtype=torch.float32)
         hidden = self.encoder.config.hidden_size
         self.projection = nn.Sequential(
             nn.Linear(hidden, proj_dim),
