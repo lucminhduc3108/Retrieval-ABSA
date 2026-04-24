@@ -1,0 +1,150 @@
+import json
+import logging
+from pathlib import Path
+
+import torch
+from torch.nn.utils import clip_grad_norm_
+
+from src.evaluation.metrics import (
+    bio_token_metrics, extract_spans, span_f1,
+    sentiment_metrics, joint_f1,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class ABSATrainer:
+    def __init__(self, model, optimizer, scheduler, device,
+                 patience: int = 5, grad_clip: float = 1.0,
+                 log_path: str = ""):
+        self.model = model
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+        self.device = device
+        self.patience = patience
+        self.grad_clip = grad_clip
+        self.log_path = log_path
+
+    def _run_batch(self, batch):
+        batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+                 for k, v in batch.items()}
+        out = self.model(
+            input_ids=batch["input_ids"],
+            attention_mask=batch["attention_mask"],
+            bio_labels=batch["bio_labels"],
+            sentiment_label=batch["sentiment_label"],
+        )
+        return out
+
+    def train(self, train_loader, val_loader, epochs: int,
+              ckpt_path: str | None = None) -> list[dict]:
+        history = []
+        best_span_f1 = -1
+        patience_counter = 0
+
+        for epoch in range(1, epochs + 1):
+            self.model.train()
+            total_loss = 0
+            for batch in train_loader:
+                out = self._run_batch(batch)
+                loss = out["loss"]
+                self.optimizer.zero_grad()
+                loss.backward()
+                if self.grad_clip > 0:
+                    clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                self.optimizer.step()
+                if self.scheduler:
+                    self.scheduler.step()
+                total_loss += loss.item()
+
+            avg_loss = total_loss / len(train_loader)
+            val_metrics = self.evaluate(val_loader)
+            record = {"epoch": epoch, "train_loss": avg_loss, **val_metrics}
+            history.append(record)
+            logger.info("Epoch %d: loss=%.4f span_f1=%.4f sent_acc=%.4f joint_f1=%.4f",
+                        epoch, avg_loss, val_metrics["span_f1"],
+                        val_metrics["sentiment_acc"], val_metrics["joint_f1"])
+
+            if self.log_path:
+                Path(self.log_path).parent.mkdir(parents=True, exist_ok=True)
+                with open(self.log_path, "a") as f:
+                    f.write(json.dumps(record) + "\n")
+
+            if val_metrics["span_f1"] > best_span_f1:
+                best_span_f1 = val_metrics["span_f1"]
+                patience_counter = 0
+                if ckpt_path:
+                    Path(ckpt_path).parent.mkdir(parents=True, exist_ok=True)
+                    torch.save(self.model.state_dict(), ckpt_path)
+                    logger.info("Saved best model (span_f1=%.4f)", best_span_f1)
+            else:
+                patience_counter += 1
+                if patience_counter >= self.patience:
+                    logger.info("Early stopping at epoch %d", epoch)
+                    break
+
+        return history
+
+    @torch.no_grad()
+    def evaluate(self, loader) -> dict:
+        self.model.eval()
+        total_loss = 0
+        all_bio_preds = []
+        all_bio_golds = []
+        all_sent_preds = []
+        all_sent_golds = []
+        all_pred_spans_with_pol = []
+        all_gold_spans_with_pol = []
+        num_batches = 0
+
+        for batch in loader:
+            out = self._run_batch(batch)
+            if out["loss"] is not None:
+                total_loss += out["loss"].item()
+            num_batches += 1
+
+            bio_logits = out["bio_logits"]
+            bio_preds = bio_logits.argmax(dim=-1)
+            bio_golds = batch["bio_labels"].to(self.device)
+
+            sent_logits = out["sentiment_logits"]
+            sent_preds = sent_logits.argmax(dim=-1)
+            sent_golds = batch["sentiment_label"].to(self.device)
+
+            for i in range(bio_preds.size(0)):
+                mask = bio_golds[i] != -100
+                pred_seq = bio_preds[i][mask].cpu().tolist()
+                gold_seq = bio_golds[i][mask].cpu().tolist()
+                all_bio_preds.append(pred_seq)
+                all_bio_golds.append(gold_seq)
+
+                pred_sp = extract_spans(pred_seq)
+                gold_sp = extract_spans(gold_seq)
+
+                sp = sent_preds[i].item()
+                sg = sent_golds[i].item()
+                all_sent_preds.append(sp)
+                all_sent_golds.append(sg)
+
+                all_pred_spans_with_pol.append(
+                    [(s, e, sp) for s, e in pred_sp])
+                all_gold_spans_with_pol.append(
+                    [(s, e, sg) for s, e in gold_sp])
+
+        avg_loss = total_loss / max(num_batches, 1)
+        bio_m = bio_token_metrics(all_bio_preds, all_bio_golds)
+        span_m = span_f1(
+            [extract_spans(s) for s in all_bio_preds],
+            [extract_spans(s) for s in all_bio_golds],
+        )
+        sent_m = sentiment_metrics(all_sent_preds, all_sent_golds)
+        joint = joint_f1(all_pred_spans_with_pol, all_gold_spans_with_pol)
+
+        return {
+            "loss": avg_loss,
+            "bio_token_f1": bio_m["f1"],
+            "span_f1": span_m["f1"],
+            "sentiment_acc": sent_m["accuracy"],
+            "sentiment_macro_f1": sent_m["macro_f1"],
+            "joint_f1": joint,
+        }
