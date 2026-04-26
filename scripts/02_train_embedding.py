@@ -62,6 +62,7 @@ def main():
         model=model, optimizer=optimizer, scheduler=scheduler,
         tau=cfg["tau"], device=device,
         log_path=cfg["log_path"], grad_clip=cfg["grad_clip"],
+        use_fp16=device == "cuda",
     )
 
     ckpt_path = os.path.join(cfg["ckpt_dir"], "best.pt")

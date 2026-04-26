@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 
 import torch
+from torch.amp import GradScaler, autocast
 from torch.nn.utils import clip_grad_norm_
 
 from src.embedding.loss import infonce_loss
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class ContrastiveTrainer:
     def __init__(self, model, optimizer, scheduler, tau, device,
-                 log_path, grad_clip=1.0):
+                 log_path, grad_clip=1.0, use_fp16=False):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -20,6 +21,10 @@ class ContrastiveTrainer:
         self.device = device
         self.log_path = log_path
         self.grad_clip = grad_clip
+        self.use_fp16 = use_fp16 and device == "cuda"
+        self.scaler = GradScaler("cuda") if self.use_fp16 else None
+        if self.use_fp16:
+            logger.info("fp16 mixed precision enabled")
 
     def _run_batch(self, batch):
         keys = ["anchor_input_ids", "anchor_attention_mask",
@@ -27,20 +32,21 @@ class ContrastiveTrainer:
                 "neg1_input_ids", "neg1_attention_mask",
                 "neg2_input_ids", "neg2_attention_mask"]
         batch = {k: batch[k].to(self.device) for k in keys}
-        out = self.model(
-            batch["anchor_input_ids"], batch["anchor_attention_mask"],
-            batch["pos_input_ids"], batch["pos_attention_mask"],
-            batch["neg1_input_ids"], batch["neg1_attention_mask"],
-            batch["neg2_input_ids"], batch["neg2_attention_mask"],
-        )
-        negatives = []
-        if out["neg1_vecs"] is not None:
-            negatives.append(out["neg1_vecs"])
-        if out["neg2_vecs"] is not None:
-            negatives.append(out["neg2_vecs"])
-        loss = infonce_loss(out["anchor_vecs"], out["pos_vecs"],
-                            negatives=negatives if negatives else None,
-                            tau=self.tau)
+        with autocast("cuda", enabled=self.use_fp16):
+            out = self.model(
+                batch["anchor_input_ids"], batch["anchor_attention_mask"],
+                batch["pos_input_ids"], batch["pos_attention_mask"],
+                batch["neg1_input_ids"], batch["neg1_attention_mask"],
+                batch["neg2_input_ids"], batch["neg2_attention_mask"],
+            )
+            negatives = []
+            if out["neg1_vecs"] is not None:
+                negatives.append(out["neg1_vecs"])
+            if out["neg2_vecs"] is not None:
+                negatives.append(out["neg2_vecs"])
+            loss = infonce_loss(out["anchor_vecs"], out["pos_vecs"],
+                                negatives=negatives if negatives else None,
+                                tau=self.tau)
         return loss, out
 
     def train(self, train_loader, val_loader, epochs, patience=3,
@@ -55,10 +61,18 @@ class ContrastiveTrainer:
             for batch in train_loader:
                 loss, _ = self._run_batch(batch)
                 self.optimizer.zero_grad()
-                loss.backward()
-                if self.grad_clip > 0:
-                    clip_grad_norm_(self.model.parameters(), self.grad_clip)
-                self.optimizer.step()
+                if self.scaler:
+                    self.scaler.scale(loss).backward()
+                    self.scaler.unscale_(self.optimizer)
+                    if self.grad_clip > 0:
+                        clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    loss.backward()
+                    if self.grad_clip > 0:
+                        clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                    self.optimizer.step()
                 if self.scheduler:
                     self.scheduler.step()
                 total_loss += loss.item()
