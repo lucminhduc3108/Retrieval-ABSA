@@ -11,3 +11,5 @@ logs/
 *.npy
 SemEval-Dataset/
 docs/
+.claude/
+kaggle_upload/
