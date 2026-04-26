@@ -83,6 +83,14 @@ def main():
     train_ds = RetrievalABSADataset(train_records, **ds_kwargs)
     val_ds = RetrievalABSADataset(val_records, **ds_kwargs)
 
+    embedding_model.cpu()
+    train_ds.device = "cpu"
+    train_ds.embedding_model = embedding_model
+    val_ds.device = "cpu"
+    val_ds.embedding_model = embedding_model
+    torch.cuda.empty_cache()
+    logger.info("Moved embedding model to CPU to free GPU memory")
+
     train_loader = DataLoader(train_ds, batch_size=cfg["batch_size"], shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=cfg["batch_size"])
 
@@ -108,6 +116,7 @@ def main():
         model=model, optimizer=optimizer, scheduler=scheduler,
         device=device, patience=cfg["patience"],
         grad_clip=cfg["grad_clip"], log_path=cfg["log_path"],
+        use_fp16=device == "cuda",
     )
 
     ckpt_path = os.path.join(cfg["ckpt_dir"], "best.pt")

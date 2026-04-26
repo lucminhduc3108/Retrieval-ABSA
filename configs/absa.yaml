@@ -3,7 +3,7 @@ num_bio_labels: 3
 num_sent_labels: 3
 lambda_cls: 0.5
 dropout: 0.1
-batch_size: 16
+batch_size: 4
 epochs: 10
 lr: 2.0e-5
 weight_decay: 0.01

@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 
 import torch
+from torch.amp import GradScaler, autocast
 from torch.nn.utils import clip_grad_norm_
 
 from src.evaluation.metrics import (
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 class ABSATrainer:
     def __init__(self, model, optimizer, scheduler, device,
                  patience: int = 5, grad_clip: float = 1.0,
-                 log_path: str = ""):
+                 log_path: str = "", use_fp16: bool = False):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -24,16 +25,21 @@ class ABSATrainer:
         self.patience = patience
         self.grad_clip = grad_clip
         self.log_path = log_path
+        self.use_fp16 = use_fp16 and device == "cuda"
+        self.scaler = GradScaler("cuda") if self.use_fp16 else None
+        if self.use_fp16:
+            logger.info("fp16 mixed precision enabled")
 
     def _run_batch(self, batch):
         batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
                  for k, v in batch.items()}
-        out = self.model(
-            input_ids=batch["input_ids"],
-            attention_mask=batch["attention_mask"],
-            bio_labels=batch["bio_labels"],
-            sentiment_label=batch["sentiment_label"],
-        )
+        with autocast("cuda", enabled=self.use_fp16):
+            out = self.model(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                bio_labels=batch["bio_labels"],
+                sentiment_label=batch["sentiment_label"],
+            )
         return out
 
     def train(self, train_loader, val_loader, epochs: int,
@@ -49,10 +55,18 @@ class ABSATrainer:
                 out = self._run_batch(batch)
                 loss = out["loss"]
                 self.optimizer.zero_grad()
-                loss.backward()
-                if self.grad_clip > 0:
-                    clip_grad_norm_(self.model.parameters(), self.grad_clip)
-                self.optimizer.step()
+                if self.scaler:
+                    self.scaler.scale(loss).backward()
+                    self.scaler.unscale_(self.optimizer)
+                    if self.grad_clip > 0:
+                        clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    loss.backward()
+                    if self.grad_clip > 0:
+                        clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                    self.optimizer.step()
                 if self.scheduler:
                     self.scheduler.step()
                 total_loss += loss.item()
