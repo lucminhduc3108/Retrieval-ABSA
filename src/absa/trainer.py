@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 class ABSATrainer:
     def __init__(self, model, optimizer, scheduler, device,
                  patience: int = 5, grad_clip: float = 1.0,
-                 log_path: str = "", use_fp16: bool = False):
+                 log_path: str = "", use_fp16: bool = False,
+                 grad_accum_steps: int = 1):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -25,10 +26,13 @@ class ABSATrainer:
         self.patience = patience
         self.grad_clip = grad_clip
         self.log_path = log_path
+        self.grad_accum_steps = grad_accum_steps
         self.use_fp16 = use_fp16 and device == "cuda"
         self.scaler = GradScaler("cuda") if self.use_fp16 else None
         if self.use_fp16:
             logger.info("fp16 mixed precision enabled")
+        if self.grad_accum_steps > 1:
+            logger.info("Gradient accumulation: %d steps", self.grad_accum_steps)
 
     def _run_batch(self, batch):
         batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
@@ -45,31 +49,38 @@ class ABSATrainer:
     def train(self, train_loader, val_loader, epochs: int,
               ckpt_path: str | None = None) -> list[dict]:
         history = []
-        best_span_f1 = -1
+        best_joint_f1 = -1
         patience_counter = 0
 
         for epoch in range(1, epochs + 1):
             self.model.train()
             total_loss = 0
-            for batch in train_loader:
+            self.optimizer.zero_grad()
+            for step, batch in enumerate(train_loader):
                 out = self._run_batch(batch)
-                loss = out["loss"]
-                self.optimizer.zero_grad()
+                loss = out["loss"] / self.grad_accum_steps
                 if self.scaler:
                     self.scaler.scale(loss).backward()
-                    self.scaler.unscale_(self.optimizer)
-                    if self.grad_clip > 0:
-                        clip_grad_norm_(self.model.parameters(), self.grad_clip)
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
                 else:
                     loss.backward()
-                    if self.grad_clip > 0:
-                        clip_grad_norm_(self.model.parameters(), self.grad_clip)
-                    self.optimizer.step()
-                if self.scheduler:
-                    self.scheduler.step()
-                total_loss += loss.item()
+                total_loss += out["loss"].item()
+
+                is_accum_step = (step + 1) % self.grad_accum_steps == 0
+                is_last_step = (step + 1) == len(train_loader)
+                if is_accum_step or is_last_step:
+                    if self.scaler:
+                        self.scaler.unscale_(self.optimizer)
+                        if self.grad_clip > 0:
+                            clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+                    else:
+                        if self.grad_clip > 0:
+                            clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                        self.optimizer.step()
+                    if self.scheduler:
+                        self.scheduler.step()
+                    self.optimizer.zero_grad()
 
             avg_loss = total_loss / len(train_loader)
             val_metrics = self.evaluate(val_loader)
@@ -84,13 +95,13 @@ class ABSATrainer:
                 with open(self.log_path, "a") as f:
                     f.write(json.dumps(record) + "\n")
 
-            if val_metrics["span_f1"] > best_span_f1:
-                best_span_f1 = val_metrics["span_f1"]
+            if val_metrics["joint_f1"] > best_joint_f1:
+                best_joint_f1 = val_metrics["joint_f1"]
                 patience_counter = 0
                 if ckpt_path:
                     Path(ckpt_path).parent.mkdir(parents=True, exist_ok=True)
                     torch.save(self.model.state_dict(), ckpt_path)
-                    logger.info("Saved best model (span_f1=%.4f)", best_span_f1)
+                    logger.info("Saved best model (joint_f1=%.4f)", best_joint_f1)
             else:
                 patience_counter += 1
                 if patience_counter >= self.patience:

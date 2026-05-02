@@ -6,7 +6,8 @@ from transformers import AutoModel
 class RetrievalABSA(nn.Module):
     def __init__(self, model_name: str = "microsoft/deberta-v3-base",
                  num_bio_labels: int = 3, num_sent_labels: int = 3,
-                 lambda_cls: float = 0.5, dropout: float = 0.1):
+                 lambda_cls: float = 0.5, dropout: float = 0.1,
+                 cls_class_weights: list[float] | None = None):
         super().__init__()
         self.encoder = AutoModel.from_pretrained(model_name, dtype=torch.float32)
         hidden = self.encoder.config.hidden_size
@@ -17,7 +18,8 @@ class RetrievalABSA(nn.Module):
         )
         self.lambda_cls = lambda_cls
         self.bio_loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
-        self.cls_loss_fn = nn.CrossEntropyLoss()
+        cls_weight = torch.tensor(cls_class_weights, dtype=torch.float32) if cls_class_weights else None
+        self.cls_loss_fn = nn.CrossEntropyLoss(weight=cls_weight)
 
     def forward(self, input_ids, attention_mask,
                 bio_labels=None, sentiment_label=None) -> dict:

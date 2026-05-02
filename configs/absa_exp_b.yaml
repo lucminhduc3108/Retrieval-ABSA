@@ -16,6 +16,6 @@ seed: 42
 bio_path: data/processed/bio_tagging.jsonl
 val_ratio: 0.1
 ckpt_dir: checkpoints/absa
-log_path: logs/absa_training.jsonl
-cls_class_weights: null
-grad_accum_steps: 1
+log_path: logs/absa_exp_b.jsonl
+cls_class_weights: [1.00, 2.88, 18.75]
+grad_accum_steps: 8

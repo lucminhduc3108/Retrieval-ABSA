@@ -4,12 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project snapshot
 
-Pipeline: contrastive DeBERTa embedding → FAISS index → multi-task retrieval-ABSA (BIO tagging + sentiment classification) on SemEval 2015+2016 Restaurant. **Status: planning-only** — `PLAN.md` is the single source of truth, no `src/` exists yet. Execution convention: each task in PLAN.md is TDD (write failing test → verify FAIL → implement → verify PASS → commit); use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to execute.
+Pipeline: contrastive DeBERTa embedding → FAISS index → multi-task retrieval-ABSA (BIO tagging + sentiment classification) on SemEval 2015+2016 Restaurant. **Status: MVP complete, ablation phase** — all 5 pipeline steps implemented and trained. Current focus: `IMPROVE.md` GĐ 1 ablation experiments to measure retrieval impact before deciding next improvements. Live status tracked in `context/STATUS.md`.
 
 ## Commands
 
 ```bash
-# Setup (once T1 is done)
+# Setup
 python -m venv .venv && .venv/Scripts/activate
 pip install -r requirements.txt
 
@@ -25,10 +25,17 @@ python scripts/03_build_index.py --embedding_ckpt checkpoints/embedding/best.pt 
        --input data/processed/classification.jsonl --out_dir indexes/
 python scripts/04_train_absa.py --config configs/absa.yaml \
        --embedding_ckpt checkpoints/embedding/best.pt --index_dir indexes/ \
-       --retrieval_config configs/retrieval.yaml
+       --grad_accum_steps 8
+python scripts/04_train_absa.py --config configs/absa.yaml --no_retrieval \
+       --grad_accum_steps 8  # no-retrieval ablation (no embedding/index needed)
 python scripts/05_evaluate.py --config configs/absa.yaml \
        --checkpoint checkpoints/absa/best.pt \
        --embedding_ckpt checkpoints/embedding/best.pt --index_dir indexes/
+python scripts/05_evaluate.py --config configs/absa.yaml \
+       --checkpoint checkpoints/absa/best.pt --no_retrieval  # evaluate no-retrieval model
+
+# Utilities
+python scripts/analyze_duplicates.py  # data duplication analysis
 ```
 
 ## Architecture
@@ -66,7 +73,8 @@ Resolution: either copy/symlink these into `data/raw/semeval{15,16}/` with the e
 
 ## Other gotchas
 
-- **No git repo at root.** Run `git init` once before the first commit in T1. `SemEval-Dataset/` has its own nested `.git/` — leave it alone; gitignore it or reference its XMLs read-only.
+- **SemEval-Dataset/** has its own nested `.git/` — leave it alone; gitignore it or reference its XMLs read-only.
 - **Windows bash shell.** Use `.venv/Scripts/activate` (not `bin/`). Quote paths containing spaces.
 - **Language convention:** prose in Vietnamese, code / identifiers / commit messages in English.
-- **MVP scope.** The "Phạm vi bị cắt" section of `PLAN.md` lists 10 explicitly deferred features (CRF, AMP, differential LR, hard negatives, stratified split, threshold tuning, E2E fine-tune, ablation, etc.). Don't add them unless the user opens a new plan.
+- **Improvement scope.** Follow `IMPROVE.md` for current improvement plan. Features still deferred: CRF layer, differential LR, hard negatives, E2E fine-tune. Only implement when ablation results (GĐ 2) justify them.
+- **Data leakage.** 49.8% test sentences overlap with train (SemEval 2015+2016 share data). Test results may be inflated. Decision pending post-ablation.

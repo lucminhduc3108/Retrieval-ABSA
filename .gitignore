@@ -12,4 +12,5 @@ logs/
 SemEval-Dataset/
 docs/
 .claude/
-kaggle_upload/
+kaggle_upload/semeval-absa-restaurant/
+temp_quad/
