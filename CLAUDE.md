@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project snapshot
 
-Pipeline: contrastive DeBERTa embedding → FAISS index → multi-task retrieval-ABSA (BIO tagging + sentiment classification) on SemEval 2015+2016 Restaurant. **Status: MVP complete, ablation phase** — all 5 pipeline steps implemented and trained. Current focus: `IMPROVE.md` GĐ 1 ablation experiments to measure retrieval impact before deciding next improvements. Live status tracked in `context/STATUS.md`.
+Pipeline: contrastive DeBERTa embedding → FAISS index → multi-task retrieval-ABSA (BIO tagging + sentiment classification) on **SemEval 2016 Restaurant only** (SB1). **Status: preparing GĐ 2 retrain** — MVP complete on old 2015+2016 data, now switching to clean SemEval 2016 only. Live status tracked in `context/STATUS.md`.
 
 ## Commands
 
@@ -58,18 +58,16 @@ These are **not optimizations** — violating any of them silently breaks the mo
 - **Aspect category = full Category#Attribute.** Giữ nguyên `FOOD#QUALITY`, `SERVICE#GENERAL`, v.v. Không rút gọn thành coarse prefix.
 - **Drop `conflict` polarity at parse time; drop `target="NULL"` from BIO only.** NULL opinions still go into classification + contrastive builders. 3-class polarity: `positive / negative / neutral`.
 
-## SemEval XML paths (PLAN.md assumed names differ from disk)
+## SemEval XML paths
 
-PLAN.md references `data/raw/semeval15/ABSA15_RestaurantsTrain.xml`, but the actual files are here (paths with spaces — quote them):
+**Using SemEval 2016 SB1 only** (sentence-level ABSA). SemEval 2015 is excluded — 2016 train is a superset of 2015.
 
-| PLAN.md name | Actual path on disk |
+| Role | Actual path on disk |
 |---|---|
-| `ABSA15_RestaurantsTrain.xml` | `SemEval-Dataset/SemEval 2015 Task 12/ABSA15_RestaurantsTrain/ABSA-15_Restaurants_Train_Final.xml` |
-| `ABSA15_Restaurants_Test.xml` | `SemEval-Dataset/SemEval 2015 Task 12/Gold Annotation/ABSA15_Restaurants_Test.xml` |
-| `ABSA16_Restaurants_Train_SB1_v2.xml` | `SemEval-Dataset/SemEval 2016 Task 5/Restaurant Training/ABSA16_Restaurants_Train_SB1_v2.xml` |
-| `EN_REST_SB1_TEST.xml.gold` | `SemEval-Dataset/SemEval 2016 Task 5/Phase B/Gold Annotation/Restaurant/EN_REST_SB1_TEST.xml.gold` |
+| **Train** | `SemEval-Dataset/SemEval 2016 Task 5/Restaurant Training/ABSA16_Restaurants_Train_SB1_v2.xml` |
+| **Test (gold)** | `SemEval-Dataset/SemEval 2016 Task 5/Phase B/Gold Annotation/Restaurant/EN_REST_SB1_TEST.xml.gold` |
 
-Resolution: either copy/symlink these into `data/raw/semeval{15,16}/` with the expected names **before running T5**, or update `scripts/01_prepare_data.py` to hardcode the real paths.
+Stats: Train 2,000 sentences / 2,507 opinions, Test 676 sentences / 859 opinions. Train-test overlap: 0.1% (1 sentence). No conflict polarity. 12 categories.
 
 ## Other gotchas
 
@@ -77,4 +75,5 @@ Resolution: either copy/symlink these into `data/raw/semeval{15,16}/` with the e
 - **Windows bash shell.** Use `.venv/Scripts/activate` (not `bin/`). Quote paths containing spaces.
 - **Language convention:** prose in Vietnamese, code / identifiers / commit messages in English.
 - **Improvement scope.** Follow `IMPROVE.md` for current improvement plan. Features still deferred: CRF layer, differential LR, hard negatives, E2E fine-tune. Only implement when ablation results (GĐ 2) justify them.
-- **Data leakage.** 49.8% test sentences overlap with train (SemEval 2015+2016 share data). Test results may be inflated. Decision pending post-ablation.
+- **SemEval 2016 only.** SemEval 2015 dropped — its train+test is a subset of 2016 train, causing massive dedup loss and 1:1 train/test ratio. Using 2016 alone gives 2,507 train opinions, 0.1% leakage, 3:1 ratio.
+- **SB2 is unusable.** SB2 files have review-level opinions (no target, no char offset) — completely different task from sentence-level ABSA.
