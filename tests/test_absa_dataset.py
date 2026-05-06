@@ -97,3 +97,23 @@ def test_query_id_passed_to_retriever():
     call_args = mock_retriever.retrieve.call_args
     assert call_args[1].get("query_id") == "test_id_123" or \
            (len(call_args[0]) > 1 and call_args[0][1] == "test_id_123")
+
+
+def test_crf_mask_present_and_matches_bio_labels():
+    rec = _make_bio_record(bio_tags=["O", "B-ASP", "O", "O"])
+    ds = RetrievalABSADataset([rec], retriever=None, tokenizer_name="microsoft/deberta-v3-base",
+                               embedding_model=None, max_length=64, top_k=0)
+    item = ds[0]
+    assert "crf_mask" in item
+    assert item["crf_mask"].dtype == torch.bool
+    assert item["crf_mask"].shape == (64,)
+    expected_mask = item["bio_labels"] != -100
+    assert (item["crf_mask"] == expected_mask).all()
+
+
+def test_crf_mask_implicit_all_false():
+    rec = _make_bio_record(implicit=True, bio_tags=["O", "O", "O", "O"])
+    ds = RetrievalABSADataset([rec], retriever=None, tokenizer_name="microsoft/deberta-v3-base",
+                               embedding_model=None, max_length=64, top_k=0)
+    item = ds[0]
+    assert not item["crf_mask"].any()

@@ -146,4 +146,5 @@ class RetrievalABSADataset(Dataset):
             "bio_labels": torch.tensor(all_labels, dtype=torch.long),
             "sentiment_label": torch.tensor(sentiment_label, dtype=torch.long),
             "query_id": record["id"],
+            "crf_mask": torch.tensor([l != IGNORE_INDEX for l in all_labels], dtype=torch.bool),
         }
