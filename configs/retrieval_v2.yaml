@@ -1,0 +1,3 @@
+top_k: 2
+threshold: 0.3
+index_dir: indexes

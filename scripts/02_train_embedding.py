@@ -54,7 +54,8 @@ def main():
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["lr"],
                                   weight_decay=cfg["weight_decay"])
     epochs = args.epochs if args.epochs else cfg["epochs"]
-    total_steps = len(train_loader) * epochs
+    grad_accum = cfg.get("grad_accum_steps", 1)
+    total_steps = (len(train_loader) * epochs) // grad_accum
     warmup_steps = int(total_steps * cfg["warmup_ratio"])
     scheduler = get_linear_schedule_with_warmup(optimizer, warmup_steps, total_steps)
 
@@ -63,6 +64,7 @@ def main():
         tau=cfg["tau"], device=device,
         log_path=cfg["log_path"], grad_clip=cfg["grad_clip"],
         use_fp16=device == "cuda",
+        grad_accum_steps=grad_accum,
     )
 
     ckpt_path = os.path.join(cfg["ckpt_dir"], "best.pt")
