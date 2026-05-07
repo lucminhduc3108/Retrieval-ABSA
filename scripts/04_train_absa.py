@@ -113,6 +113,7 @@ def main():
         lambda_cls=cfg["lambda_cls"],
         dropout=cfg["dropout"],
         cls_class_weights=cfg.get("cls_class_weights"),
+        use_crf=cfg.get("use_crf", False),
     ).to(device)
 
     if hasattr(train_ds, 'tokenizer') and len(train_ds.tokenizer) > model.encoder.config.vocab_size:

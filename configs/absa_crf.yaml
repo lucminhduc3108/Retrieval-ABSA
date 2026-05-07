@@ -1,0 +1,22 @@
+model_name: microsoft/deberta-v3-base
+num_bio_labels: 3
+num_sent_labels: 3
+lambda_cls: 0.5
+dropout: 0.1
+batch_size: 4
+epochs: 10
+lr: 2.0e-5
+weight_decay: 0.01
+warmup_ratio: 0.1
+max_seq_length: 512
+query_budget: 100
+grad_clip: 1.0
+patience: 5
+seed: 42
+bio_path: data/processed/bio_tagging.jsonl
+val_ratio: 0.1
+ckpt_dir: checkpoints/absa
+log_path: logs/absa_crf.jsonl
+cls_class_weights: [1.00, 1.70, 4.33]
+grad_accum_steps: 8
+use_crf: true
