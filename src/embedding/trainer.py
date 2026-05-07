@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 
 class ContrastiveTrainer:
     def __init__(self, model, optimizer, scheduler, tau, device,
-                 log_path, grad_clip=1.0, use_fp16=False):
+                 log_path, grad_clip=1.0, use_fp16=False,
+                 grad_accum_steps=1):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -21,10 +22,13 @@ class ContrastiveTrainer:
         self.device = device
         self.log_path = log_path
         self.grad_clip = grad_clip
+        self.grad_accum_steps = grad_accum_steps
         self.use_fp16 = use_fp16 and device == "cuda"
         self.scaler = GradScaler("cuda") if self.use_fp16 else None
         if self.use_fp16:
             logger.info("fp16 mixed precision enabled")
+        if self.grad_accum_steps > 1:
+            logger.info("Gradient accumulation: %d steps", self.grad_accum_steps)
 
     def _run_batch(self, batch):
         keys = ["anchor_input_ids", "anchor_attention_mask",
@@ -58,24 +62,32 @@ class ContrastiveTrainer:
         for epoch in range(1, epochs + 1):
             self.model.train()
             total_loss = 0
-            for batch in train_loader:
+            self.optimizer.zero_grad()
+            for step, batch in enumerate(train_loader):
                 loss, _ = self._run_batch(batch)
-                self.optimizer.zero_grad()
+                scaled_loss = loss / self.grad_accum_steps
                 if self.scaler:
-                    self.scaler.scale(loss).backward()
-                    self.scaler.unscale_(self.optimizer)
-                    if self.grad_clip > 0:
-                        clip_grad_norm_(self.model.parameters(), self.grad_clip)
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
+                    self.scaler.scale(scaled_loss).backward()
                 else:
-                    loss.backward()
-                    if self.grad_clip > 0:
-                        clip_grad_norm_(self.model.parameters(), self.grad_clip)
-                    self.optimizer.step()
-                if self.scheduler:
-                    self.scheduler.step()
+                    scaled_loss.backward()
                 total_loss += loss.item()
+
+                is_accum_step = (step + 1) % self.grad_accum_steps == 0
+                is_last_step = (step + 1) == len(train_loader)
+                if is_accum_step or is_last_step:
+                    if self.scaler:
+                        self.scaler.unscale_(self.optimizer)
+                        if self.grad_clip > 0:
+                            clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+                    else:
+                        if self.grad_clip > 0:
+                            clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                        self.optimizer.step()
+                    if self.scheduler:
+                        self.scheduler.step()
+                    self.optimizer.zero_grad()
 
             avg_loss = total_loss / len(train_loader)
             recall = self.evaluate_recall(val_loader)

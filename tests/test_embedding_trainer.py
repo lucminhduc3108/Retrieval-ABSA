@@ -106,3 +106,20 @@ def test_evaluate_recall_returns_expected_keys(tmp_path):
     assert "recall@3" in result
     assert "recall@5" in result
     assert 0 <= result["recall@1"] <= 1
+
+
+def test_trainer_with_grad_accum(tmp_path):
+    torch.manual_seed(0)
+    p = tmp_path / "triplets.jsonl"
+    write_jsonl([_make_triplet(i) for i in range(8)], str(p))
+    tok = AutoTokenizer.from_pretrained("microsoft/deberta-v3-base")
+    ds = ContrastiveTripletDataset(str(p), tok, max_length=32)
+    loader = torch.utils.data.DataLoader(ds, batch_size=4)
+
+    model = ContrastiveEmbedder(proj_dim=32)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    trainer = ContrastiveTrainer(model, optimizer, scheduler=None,
+                                 tau=0.07, device="cpu", log_path="",
+                                 grad_accum_steps=2)
+    result = trainer.evaluate_recall(loader, k_list=(1, 3))
+    assert "recall@1" in result
