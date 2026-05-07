@@ -43,6 +43,7 @@ class ABSATrainer:
                 attention_mask=batch["attention_mask"],
                 bio_labels=batch["bio_labels"],
                 sentiment_label=batch["sentiment_label"],
+                crf_mask=batch.get("crf_mask"),
             )
         return out
 
@@ -122,6 +123,8 @@ class ABSATrainer:
         all_gold_spans_with_pol = []
         num_batches = 0
 
+        use_crf = getattr(self.model, 'use_crf', False)
+
         for batch in loader:
             out = self._run_batch(batch)
             if out["loss"] is not None:
@@ -129,17 +132,33 @@ class ABSATrainer:
             num_batches += 1
 
             bio_logits = out["bio_logits"]
-            bio_preds = bio_logits.argmax(dim=-1)
             bio_golds = batch["bio_labels"].to(self.device)
+
+            if use_crf:
+                crf_mask = batch["crf_mask"].to(self.device)
+                # torchcrf requires mask[:, 0] all True; force it on then strip
+                # position 0 from decoded output to match gold_seq length
+                crf_mask_fixed = crf_mask.clone()
+                crf_mask_fixed[:, 0] = True
+                decoded = self.model.crf.decode(bio_logits.float(), mask=crf_mask_fixed)
+            else:
+                decoded = None
 
             sent_logits = out["sentiment_logits"]
             sent_preds = sent_logits.argmax(dim=-1)
             sent_golds = batch["sentiment_label"].to(self.device)
 
-            for i in range(bio_preds.size(0)):
+            for i in range(bio_golds.size(0)):
                 mask = bio_golds[i] != -100
-                pred_seq = bio_preds[i][mask].cpu().tolist()
                 gold_seq = bio_golds[i][mask].cpu().tolist()
+
+                if decoded is not None:
+                    # decoded[i] has length = sum(crf_mask_fixed[i]) = sum(mask) + 1
+                    # strip the forced position-0 element to align with gold_seq
+                    pred_seq = decoded[i][1:]
+                else:
+                    pred_seq = bio_logits[i].argmax(dim=-1)[mask].cpu().tolist()
+
                 all_bio_preds.append(pred_seq)
                 all_bio_golds.append(gold_seq)
 
