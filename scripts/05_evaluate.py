@@ -114,7 +114,10 @@ def main():
     if hasattr(test_ds_tmp, 'tokenizer') and len(test_ds_tmp.tokenizer) > model.encoder.config.vocab_size:
         model.encoder.resize_token_embeddings(len(test_ds_tmp.tokenizer))
 
-    model.load_state_dict(torch.load(args.checkpoint, map_location=device))
+    state = torch.load(args.checkpoint, map_location=device)
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    if missing:
+        logger.warning("Missing keys (ok for loss-only buffers): %s", missing)
     model.eval()
     logger.info("Loaded ABSA checkpoint: %s", args.checkpoint)
 
