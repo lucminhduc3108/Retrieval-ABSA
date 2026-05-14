@@ -66,3 +66,20 @@ def test_crf_all_ignored_returns_zero_bio_loss():
     crf_mask = bio != -100  # all False
     out = m(ids, mask, bio_labels=bio, sentiment_label=sent, crf_mask=crf_mask)
     assert out["loss_bio"].item() == 0.0
+
+
+def test_crf_loss_bio_per_token_scale():
+    """CRF loss_bio (normalized) should be O(1), not O(seq_len)."""
+    m = RetrievalABSA(use_crf=True)
+    ids = torch.randint(0, 1000, (2, 20))
+    mask = torch.ones_like(ids)
+    bio = torch.zeros(2, 20, dtype=torch.long)
+    bio[:, 0] = -100
+    sent = torch.zeros(2, dtype=torch.long)
+    crf_mask = bio != -100
+    out = m(ids, mask, bio_labels=bio, sentiment_label=sent, crf_mask=crf_mask)
+    # per-token normalized: should be < 5.0, not > 10 (per-sequence would be ~20×larger)
+    assert out["loss_bio"].item() < 5.0
+    # loss_bio and loss_cls should be within 20× of each other
+    ratio = out["loss_bio"].item() / out["loss_cls"].item()
+    assert 0.05 < ratio < 20.0

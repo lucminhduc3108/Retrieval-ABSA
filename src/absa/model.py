@@ -49,8 +49,10 @@ class RetrievalABSA(nn.Module):
                 # when computing the mean over only the truly-valid tokens.
                 crf_mask_fixed = crf_mask.clone()
                 crf_mask_fixed[:, 0] = True
-                loss_bio = -self.crf(bio_logits.float(), safe_labels,
-                                     mask=crf_mask_fixed, reduction='mean')
+                _nll = -self.crf(bio_logits.float(), safe_labels,
+                                 mask=crf_mask_fixed, reduction='none')  # (batch,)
+                _tokens = crf_mask_fixed.sum(dim=1).float()               # (batch,)
+                loss_bio = (_nll / _tokens).mean()                        # per-token mean
             elif self.use_crf and (crf_mask is None or not crf_mask.any()):
                 loss_bio = torch.tensor(0.0, device=input_ids.device)
             else:
