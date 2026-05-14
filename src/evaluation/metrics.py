@@ -1,6 +1,17 @@
 from sklearn.metrics import precision_recall_fscore_support, accuracy_score, f1_score
 
 
+def constrained_bio_decode(pred_seq: list[int]) -> list[int]:
+    """Fix invalid BIO: I-ASP (2) without preceding B-ASP (1) → change to B-ASP."""
+    fixed = []
+    for tag in pred_seq:
+        if tag == 2 and (not fixed or fixed[-1] == 0):
+            fixed.append(1)
+        else:
+            fixed.append(tag)
+    return fixed
+
+
 def extract_spans(bio_seq: list[int]) -> list[tuple[int, int]]:
     spans = []
     start = None

@@ -7,7 +7,7 @@ from torch.amp import GradScaler, autocast
 from torch.nn.utils import clip_grad_norm_
 
 from src.evaluation.metrics import (
-    bio_token_metrics, extract_spans, span_f1,
+    bio_token_metrics, constrained_bio_decode, extract_spans, span_f1,
     sentiment_metrics, joint_f1,
 )
 
@@ -158,6 +158,7 @@ class ABSATrainer:
                     pred_seq = decoded[i][1:]
                 else:
                     pred_seq = bio_logits[i].argmax(dim=-1)[mask].cpu().tolist()
+                    pred_seq = constrained_bio_decode(pred_seq)
 
                 all_bio_preds.append(pred_seq)
                 all_bio_golds.append(gold_seq)

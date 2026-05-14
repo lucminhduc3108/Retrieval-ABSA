@@ -1,5 +1,6 @@
 from src.evaluation.metrics import (
-    bio_token_metrics, extract_spans, span_f1, sentiment_metrics, joint_f1,
+    bio_token_metrics, constrained_bio_decode, extract_spans, span_f1,
+    sentiment_metrics, joint_f1,
 )
 
 
@@ -55,3 +56,15 @@ def test_joint_f1_requires_both():
 
 def test_joint_f1_empty():
     assert joint_f1([[]], [[]]) == 0.0
+
+
+def test_constrained_bio_decode_fixes_i_after_o():
+    assert constrained_bio_decode([0, 2, 2, 0]) == [0, 1, 2, 0]
+
+
+def test_constrained_bio_decode_fixes_i_at_start():
+    assert constrained_bio_decode([2, 2, 0]) == [1, 2, 0]
+
+
+def test_constrained_bio_decode_valid_sequence_unchanged():
+    assert constrained_bio_decode([0, 1, 2, 0, 1, 0]) == [0, 1, 2, 0, 1, 0]
