@@ -1,7 +1,7 @@
 model_name: microsoft/deberta-v3-base
 proj_dim: 256
 tau: 0.12
-batch_size: 16
+batch_size: 128
 epochs: 15
 lr: 2.0e-5
 weight_decay: 0.01
@@ -14,4 +14,4 @@ triplets_path: data/processed/contrastive_triplets.jsonl
 val_ratio: 0.1
 ckpt_dir: checkpoints/embedding
 log_path: logs/embedding_v2.jsonl
-grad_accum_steps: 4
+grad_accum_steps: 1

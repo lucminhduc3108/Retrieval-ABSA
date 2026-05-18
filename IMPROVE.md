@@ -13,7 +13,7 @@ Retrieval-ABSA pipeline đã hoàn thành MVP với kết quả test: Joint F1 =
 
 ---
 
-## GĐ 0: Code Logic Fixes — DONE ✅
+## Phase 0: Code Logic Fixes — DONE ✅
 
 - [x] **0a. Early stopping: span_f1 → joint_f1** — `src/absa/trainer.py`
 - [x] **0b. Split evaluation: implicit vs explicit** — `scripts/05_evaluate.py`
@@ -25,7 +25,7 @@ Retrieval-ABSA pipeline đã hoàn thành MVP với kết quả test: Joint F1 =
 
 ---
 
-## GĐ 1: Data Quality Fixes — DONE ✅
+## Phase 1: Data Quality Fixes — DONE ✅
 
 **Mục tiêu:** Tạo dataset sạch, reliable trước khi invest GPU.
 
@@ -37,7 +37,7 @@ Retrieval-ABSA pipeline đã hoàn thành MVP với kết quả test: Joint F1 =
 - [x] **1d. Recalculate class weights** — `configs/absa_exp_c.yaml`
 - [x] **1e. Chuyển sang SemEval 2016 only** — bỏ SemEval 2015
 
-### Dataset SemEval 2016 SB1 (dùng cho GĐ 2+)
+### Dataset SemEval 2016 SB1 (dùng cho Phase 2+)
 
 ```
 Source files:
@@ -66,7 +66,7 @@ SemEval 2016 train chứa toàn bộ SemEval 2015 (train + test). Gộp 2 datase
 
 ---
 
-## GĐ 2: Retrain Pipeline on SemEval 2016 (1 Kaggle session)
+## Phase 2: Retrain Pipeline on SemEval 2016 (1 Kaggle session)
 
 **Mục tiêu:** Train lại toàn bộ pipeline trên SemEval 2016 sạch + code fixes.
 
@@ -95,9 +95,9 @@ Lưu ý: so sánh với MVP KHÔNG fair (khác dataset, khác test set). MVP dù
 
 ---
 
-## GĐ 3: Architecture Improvements (conditional, 1-2 Kaggle sessions)
+## Phase 3: Architecture Improvements (conditional, 1-2 Kaggle sessions)
 
-Dựa trên kết quả GĐ 2, chọn improvements có ROI cao nhất:
+Dựa trên kết quả Phase 2, chọn improvements có ROI cao nhất:
 
 ### 3A. ABSA model (nếu span F1 vẫn là bottleneck)
 1. **CRF layer** cho BIO head (enforce B-before-I sequential constraint)
@@ -123,17 +123,17 @@ Dựa trên kết quả GĐ 2, chọn improvements có ROI cao nhất:
 ## Thứ tự thực hiện
 
 ```
-GĐ 0 ✅ DONE — Code logic fixes (local)
+Phase 0 ✅ DONE — Code logic fixes (local)
        │
        ▼
-GĐ 1 (local, ~2-3 giờ code work)
+Phase 1 (local, ~2-3 giờ code work)
   ├── 1a: Deduplicate annotations
   ├── 1b: Handle test leakage (report both splits)
   ├── 1c: Re-run 01_prepare_data.py
   └── 1d: Recalculate class weights
        │
        ▼
-GĐ 2 (1-2 Kaggle sessions)
+Phase 2 (1-2 Kaggle sessions)
   ├── 2a: Sửa 01_prepare_data.py (SemEval 2016 only)
   ├── 2b: Retrain embedding
   ├── 2c: Rebuild FAISS index
@@ -141,7 +141,7 @@ GĐ 2 (1-2 Kaggle sessions)
   └── 2e: Evaluate
        │
        ▼
-GĐ 3 (conditional, 1-2 Kaggle sessions)
+Phase 3 (conditional, 1-2 Kaggle sessions)
   ├── 3A: CRF + diff LR (nếu span bottleneck)
   ├── 3B: Better embedding (nếu retrieval delta thấp)
   └── 3C: Data augmentation (nếu neutral vẫn kém)
@@ -151,7 +151,7 @@ GĐ 3 (conditional, 1-2 Kaggle sessions)
 
 ## Files cần sửa/tạo
 
-| File | Thay đổi | GĐ |
+| File | Thay đổi | Phase |
 |---|---|---|
 | `scripts/01_prepare_data.py` | SemEval 2016 only, simplify dedup | 2a |
 | `configs/absa_exp_c.yaml` | Sqrt class weights (recalc if needed) | 2d |
@@ -170,7 +170,7 @@ python scripts/analyze_duplicates.py
 # Expected: ~0% leakage
 ```
 
-Sau GĐ 2 (Kaggle):
+Sau Phase 2 (Kaggle):
 ```bash
 python scripts/05_evaluate.py --config configs/absa_exp_c.yaml \
   --checkpoint checkpoints/absa/best.pt \

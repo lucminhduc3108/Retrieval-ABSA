@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project snapshot
 
-Pipeline: contrastive DeBERTa embedding → FAISS index → multi-task retrieval-ABSA (BIO tagging + sentiment classification) on **SemEval 2016 Restaurant only** (SB1). **Status: preparing GĐ 2 retrain** — MVP complete on old 2015+2016 data, now switching to clean SemEval 2016 only. Live status tracked in `context/STATUS.md`.
+Pipeline: contrastive DeBERTa embedding → FAISS index → multi-task retrieval-ABSA (BIO tagging + sentiment classification) on **SemEval 2016 Restaurant only** (SB1). **Status: Phase 3 (retrieval improvements)** — Phase 2 complete, CRF dropped, now tuning retrieval (embedding hyperparams + hard negatives). Live status tracked in `context/STATUS.md`.
 
 ## Commands
 
@@ -46,7 +46,7 @@ Three phases that are intentionally separate (don't merge their backbones in MVP
 
 2. **Retrieval index** (`src/retrieval/`): `encode_records` builds `faiss.IndexFlatIP` from train-split. Persists `train.faiss` + `train_metadata.jsonl` (containing `tokens`, `bio_tags`, `aspect_category`, `polarity` per record) + `train_vectors.npy`. `Retriever.retrieve(query_vec, query_id)` does self-exclusion at query time so the ABSA dataset gets clean neighbors.
 
-3. **Multi-task ABSA** (`src/absa/`): separate DeBERTa backbone. Input = `[CLS] query [SEP] query_aspect [SEP] ret1_sent [ASP] ret1_asp [POL] ret1_pol [SEP] ...`. BIO head `Linear(768,3)` + sentiment head `Dropout→Linear(768,3)` on `[CLS]`. Loss = `L_bio + 0.5 * L_cls`. Metrics in `src/evaluation/metrics.py` (token F1, span F1, sentiment acc/macro-F1, joint F1).
+3. **Multi-task ABSA** (`src/absa/`): separate DeBERTa backbone. Input = `[CLS] query [SEP] query_aspect [SEP] ret1_sent [ASP] ret1_asp [POL] ret1_pol [SEP] ...`. BIO head `Linear(768,3)` + optional CRF layer (`use_crf=true` in config) + sentiment head `Dropout→Linear(768,3)` on `[CLS]`. Loss = `L_bio + 0.5 * L_cls`. Metrics in `src/evaluation/metrics.py` (token F1, span F1, sentiment acc/macro-F1, joint F1).
 
 ## Non-obvious correctness invariants
 
@@ -74,6 +74,6 @@ Stats: Train 2,000 sentences / 2,507 opinions, Test 676 sentences / 859 opinions
 - **SemEval-Dataset/** has its own nested `.git/` — leave it alone; gitignore it or reference its XMLs read-only.
 - **Windows bash shell.** Use `.venv/Scripts/activate` (not `bin/`). Quote paths containing spaces.
 - **Language convention:** prose in Vietnamese, code / identifiers / commit messages in English.
-- **Improvement scope.** Follow `IMPROVE.md` for current improvement plan. Features still deferred: CRF layer, differential LR, hard negatives, E2E fine-tune. Only implement when ablation results (GĐ 2) justify them.
+- **Improvement scope.** Follow `IMPROVE.md` for current improvement plan. Phase 3 code complete: retrieval hyperparams (tau/top_k/threshold), hard negative mining. CRF dropped (tested, worse than CE). Features still deferred: differential LR, E2E fine-tune.
 - **SemEval 2016 only.** SemEval 2015 dropped — its train+test is a subset of 2016 train, causing massive dedup loss and 1:1 train/test ratio. Using 2016 alone gives 2,507 train opinions, 0.1% leakage, 3:1 ratio.
 - **SB2 is unusable.** SB2 files have review-level opinions (no target, no char offset) — completely different task from sentence-level ABSA.
