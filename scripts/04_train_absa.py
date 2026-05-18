@@ -35,6 +35,8 @@ def main():
     parser.add_argument("--grad_accum_steps", type=int, default=None)
     parser.add_argument("--ckpt_path", default=None,
                         help="Override checkpoint save path")
+    parser.add_argument("--patience", type=int, default=None,
+                        help="Override early stopping patience")
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
@@ -129,7 +131,7 @@ def main():
 
     trainer = ABSATrainer(
         model=model, optimizer=optimizer, scheduler=scheduler,
-        device=device, patience=cfg["patience"],
+        device=device, patience=args.patience or cfg["patience"],
         grad_clip=cfg["grad_clip"], log_path=cfg["log_path"],
         use_fp16=device == "cuda",
         grad_accum_steps=grad_accum,
