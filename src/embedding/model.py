@@ -6,9 +6,12 @@ from transformers import AutoModel
 
 class ContrastiveEmbedder(nn.Module):
     def __init__(self, model_name: str = "microsoft/deberta-v3-base",
-                 proj_dim: int = 256, dropout: float = 0.1):
+                 proj_dim: int = 256, dropout: float = 0.1,
+                 gradient_checkpointing: bool = False):
         super().__init__()
         self.encoder = AutoModel.from_pretrained(model_name, dtype=torch.float32)
+        if gradient_checkpointing:
+            self.encoder.gradient_checkpointing_enable()
         hidden = self.encoder.config.hidden_size
         self.projection = nn.Sequential(
             nn.Linear(hidden, proj_dim),

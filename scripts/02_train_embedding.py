@@ -49,6 +49,7 @@ def main():
     model = ContrastiveEmbedder(
         model_name=cfg["model_name"],
         proj_dim=cfg["proj_dim"],
+        gradient_checkpointing=cfg.get("gradient_checkpointing", False),
     ).to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["lr"],

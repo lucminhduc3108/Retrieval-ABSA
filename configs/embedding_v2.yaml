@@ -15,3 +15,4 @@ val_ratio: 0.1
 ckpt_dir: checkpoints/embedding
 log_path: logs/embedding_v2.jsonl
 grad_accum_steps: 1
+gradient_checkpointing: true
