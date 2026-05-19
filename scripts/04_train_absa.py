@@ -37,10 +37,16 @@ def main():
                         help="Override checkpoint save path")
     parser.add_argument("--patience", type=int, default=None,
                         help="Override early stopping patience")
+    parser.add_argument("--split_bio", action="store_true",
+                        help="Separate BIO head input from retrieval context")
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
     ret_cfg = load_yaml(args.retrieval_config)
+    split_bio = args.split_bio or cfg.get("split_bio", False)
+    if args.no_retrieval:
+        split_bio = False
+    bio_max_length = cfg.get("bio_max_length", 128)
     set_seed(cfg["seed"])
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info("Device: %s", device)
@@ -91,6 +97,8 @@ def main():
         query_budget=cfg["query_budget"],
         top_k=ret_cfg["top_k"] if not args.no_retrieval else 0,
         device=device,
+        split_bio=split_bio,
+        bio_max_length=bio_max_length,
     )
 
     train_ds = RetrievalABSADataset(train_records, **ds_kwargs)

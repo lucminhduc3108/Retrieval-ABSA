@@ -19,3 +19,5 @@ ckpt_dir: checkpoints/absa
 log_path: logs/absa_training.jsonl
 cls_class_weights: null
 grad_accum_steps: 1
+split_bio: false
+bio_max_length: 128

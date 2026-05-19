@@ -35,7 +35,8 @@ def make_table(results: dict, label: str = "") -> str:
 
 
 def evaluate_subset(records, model, trainer, cfg, ret_cfg, retriever,
-                    embedding_model, device, no_retrieval):
+                    embedding_model, device, no_retrieval,
+                    split_bio=False, bio_max_length=128):
     ds = RetrievalABSADataset(
         records, retriever=retriever,
         tokenizer_name=cfg["model_name"],
@@ -44,6 +45,8 @@ def evaluate_subset(records, model, trainer, cfg, ret_cfg, retriever,
         query_budget=cfg["query_budget"],
         top_k=ret_cfg["top_k"] if not no_retrieval else 0,
         device=device,
+        split_bio=split_bio,
+        bio_max_length=bio_max_length,
     )
     loader = DataLoader(ds, batch_size=cfg["batch_size"])
     return trainer.evaluate(loader)
@@ -57,10 +60,16 @@ def main():
     parser.add_argument("--index_dir", default="indexes/")
     parser.add_argument("--retrieval_config", default="configs/retrieval.yaml")
     parser.add_argument("--no_retrieval", action="store_true")
+    parser.add_argument("--split_bio", action="store_true",
+                        help="Separate BIO head input from retrieval context")
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
     ret_cfg = load_yaml(args.retrieval_config)
+    split_bio = args.split_bio or cfg.get("split_bio", False)
+    if args.no_retrieval:
+        split_bio = False
+    bio_max_length = cfg.get("bio_max_length", 128)
     set_seed(cfg["seed"])
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info("Device: %s", device)
@@ -110,6 +119,8 @@ def main():
         query_budget=cfg["query_budget"],
         top_k=ret_cfg["top_k"] if not args.no_retrieval else 0,
         device=device,
+        split_bio=split_bio,
+        bio_max_length=bio_max_length,
     )
     if hasattr(test_ds_tmp, 'tokenizer') and len(test_ds_tmp.tokenizer) > model.encoder.config.vocab_size:
         model.encoder.resize_token_embeddings(len(test_ds_tmp.tokenizer))
@@ -130,6 +141,7 @@ def main():
         model=model, trainer=trainer, cfg=cfg, ret_cfg=ret_cfg,
         retriever=retriever, embedding_model=embedding_model,
         device=device, no_retrieval=args.no_retrieval,
+        split_bio=split_bio, bio_max_length=bio_max_length,
     )
 
     output_parts = []
