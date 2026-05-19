@@ -41,6 +41,8 @@ class ABSATrainer:
             out = self.model(
                 input_ids=batch["input_ids"],
                 attention_mask=batch["attention_mask"],
+                bio_input_ids=batch.get("bio_input_ids"),
+                bio_attention_mask=batch.get("bio_attention_mask"),
                 bio_labels=batch["bio_labels"],
                 sentiment_label=batch["sentiment_label"],
                 crf_mask=batch.get("crf_mask"),
@@ -133,6 +135,9 @@ class ABSATrainer:
 
             bio_logits = out["bio_logits"]
             bio_golds = batch["bio_labels"].to(self.device)
+
+            if bio_golds.size(1) > bio_logits.size(1):
+                bio_golds = bio_golds[:, :bio_logits.size(1)]
 
             if use_crf:
                 crf_mask = batch["crf_mask"].to(self.device)
