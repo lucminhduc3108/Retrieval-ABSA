@@ -117,3 +117,40 @@ def test_crf_mask_implicit_all_false():
                                embedding_model=None, max_length=64, top_k=0)
     item = ds[0]
     assert not item["crf_mask"].any()
+
+
+def test_split_bio_returns_bio_input_ids():
+    rec = _make_bio_record(bio_tags=["O", "B-ASP", "O", "O"])
+    ds = RetrievalABSADataset([rec], retriever=None,
+                               tokenizer_name="microsoft/deberta-v3-base",
+                               embedding_model=None, max_length=64, top_k=0,
+                               split_bio=True, bio_max_length=32)
+    item = ds[0]
+    assert "bio_input_ids" in item
+    assert "bio_attention_mask" in item
+    assert item["bio_input_ids"].shape == (32,)
+    assert item["bio_attention_mask"].shape == (32,)
+
+
+def test_split_bio_false_no_bio_input_ids():
+    rec = _make_bio_record(bio_tags=["O", "B-ASP", "O", "O"])
+    ds = RetrievalABSADataset([rec], retriever=None,
+                               tokenizer_name="microsoft/deberta-v3-base",
+                               embedding_model=None, max_length=64, top_k=0,
+                               split_bio=False)
+    item = ds[0]
+    assert "bio_input_ids" not in item
+
+
+def test_split_bio_query_part_matches():
+    """bio_input_ids should contain only query+aspect, matching the start of input_ids."""
+    rec = _make_bio_record(bio_tags=["O", "B-ASP", "O", "O"])
+    ds = RetrievalABSADataset([rec], retriever=None,
+                               tokenizer_name="microsoft/deberta-v3-base",
+                               embedding_model=None, max_length=64, top_k=0,
+                               split_bio=True, bio_max_length=32)
+    item = ds[0]
+    bio_len = item["bio_attention_mask"].sum().item()
+    full_ids = item["input_ids"][:bio_len].tolist()
+    bio_ids = item["bio_input_ids"][:bio_len].tolist()
+    assert bio_ids == full_ids

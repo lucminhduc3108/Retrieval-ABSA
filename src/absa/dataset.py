@@ -18,7 +18,8 @@ class RetrievalABSADataset(Dataset):
                  tokenizer_name: str = "microsoft/deberta-v3-base",
                  embedding_model=None,
                  max_length: int = 512, query_budget: int = 100,
-                 top_k: int = 3, device: str = "cpu"):
+                 top_k: int = 3, device: str = "cpu",
+                 split_bio: bool = False, bio_max_length: int = 128):
         self.records = bio_records
         self.retriever = retriever
         self.embedding_model = embedding_model
@@ -27,6 +28,8 @@ class RetrievalABSADataset(Dataset):
         self.query_budget = query_budget
         self.top_k = top_k
         self.device = device
+        self.split_bio = split_bio
+        self.bio_max_length = bio_max_length
 
         if "[ASP]" not in self.tokenizer.get_vocab():
             self.tokenizer.add_special_tokens(
@@ -140,7 +143,7 @@ class RetrievalABSADataset(Dataset):
 
         sentiment_label = POL2ID[record["polarity"]]
 
-        return {
+        result = {
             "input_ids": torch.tensor(all_ids, dtype=torch.long),
             "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
             "bio_labels": torch.tensor(all_labels, dtype=torch.long),
@@ -148,3 +151,15 @@ class RetrievalABSADataset(Dataset):
             "query_id": record["id"],
             "crf_mask": torch.tensor([l != IGNORE_INDEX for l in all_labels], dtype=torch.bool),
         }
+
+        if self.split_bio:
+            bio_ids = query_part_ids[:]
+            if len(bio_ids) > self.bio_max_length:
+                bio_ids = bio_ids[:self.bio_max_length]
+            bio_pad = self.bio_max_length - len(bio_ids)
+            bio_attn = [1] * len(bio_ids) + [0] * bio_pad
+            bio_ids = bio_ids + [self.tokenizer.pad_token_id] * bio_pad
+            result["bio_input_ids"] = torch.tensor(bio_ids, dtype=torch.long)
+            result["bio_attention_mask"] = torch.tensor(bio_attn, dtype=torch.long)
+
+        return result
