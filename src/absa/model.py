@@ -27,13 +27,23 @@ class RetrievalABSA(nn.Module):
         self.cls_loss_fn = nn.CrossEntropyLoss(weight=cls_weight)
 
     def forward(self, input_ids, attention_mask,
+                bio_input_ids=None, bio_attention_mask=None,
                 bio_labels=None, sentiment_label=None,
                 crf_mask=None) -> dict:
-        outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
-        sequence_output = outputs.last_hidden_state
-        cls_output = sequence_output[:, 0]
+        if bio_input_ids is not None:
+            bio_out = self.encoder(input_ids=bio_input_ids,
+                                   attention_mask=bio_attention_mask)
+            bio_sequence = bio_out.last_hidden_state
+            sent_out = self.encoder(input_ids=input_ids,
+                                    attention_mask=attention_mask)
+            cls_output = sent_out.last_hidden_state[:, 0]
+        else:
+            outputs = self.encoder(input_ids=input_ids,
+                                   attention_mask=attention_mask)
+            bio_sequence = outputs.last_hidden_state
+            cls_output = bio_sequence[:, 0]
 
-        bio_logits = self.bio_head(sequence_output)
+        bio_logits = self.bio_head(bio_sequence)
         sentiment_logits = self.sentiment_head(cls_output)
 
         loss = None
@@ -41,18 +51,20 @@ class RetrievalABSA(nn.Module):
         loss_cls = None
 
         if bio_labels is not None and sentiment_label is not None:
+            if bio_input_ids is not None and bio_labels.size(1) > bio_logits.size(1):
+                bio_labels = bio_labels[:, :bio_logits.size(1)]
+                if crf_mask is not None:
+                    crf_mask = crf_mask[:, :bio_logits.size(1)]
+
             if self.use_crf and crf_mask is not None and crf_mask.any():
                 safe_labels = bio_labels.clone()
                 safe_labels[safe_labels == -100] = 0
-                # torchcrf requires mask[:, 0] all True; force first timestep on
-                # and let safe_labels carry 0 there — CRF ignores those positions
-                # when computing the mean over only the truly-valid tokens.
                 crf_mask_fixed = crf_mask.clone()
                 crf_mask_fixed[:, 0] = True
                 _nll = -self.crf(bio_logits.float(), safe_labels,
-                                 mask=crf_mask_fixed, reduction='none')  # (batch,)
-                _tokens = crf_mask_fixed.sum(dim=1).float()               # (batch,)
-                loss_bio = (_nll / _tokens).mean()                        # per-token mean
+                                 mask=crf_mask_fixed, reduction='none')
+                _tokens = crf_mask_fixed.sum(dim=1).float()
+                loss_bio = (_nll / _tokens).mean()
             elif self.use_crf and (crf_mask is None or not crf_mask.any()):
                 loss_bio = torch.tensor(0.0, device=input_ids.device)
             else:

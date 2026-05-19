@@ -83,3 +83,42 @@ def test_crf_loss_bio_per_token_scale():
     # loss_bio and loss_cls should be within 20× of each other
     ratio = out["loss_bio"].item() / out["loss_cls"].item()
     assert 0.05 < ratio < 20.0
+
+
+def test_two_pass_forward_shapes():
+    m = RetrievalABSA()
+    full_ids = torch.randint(0, 1000, (2, 64))
+    full_mask = torch.ones_like(full_ids)
+    bio_ids = torch.randint(0, 1000, (2, 16))
+    bio_mask = torch.ones_like(bio_ids)
+    out = m(full_ids, full_mask, bio_input_ids=bio_ids, bio_attention_mask=bio_mask)
+    assert out["bio_logits"].shape == (2, 16, 3)
+    assert out["sentiment_logits"].shape == (2, 3)
+    assert out["loss"] is None
+
+
+def test_two_pass_forward_with_labels():
+    m = RetrievalABSA()
+    full_ids = torch.randint(0, 1000, (2, 64))
+    full_mask = torch.ones_like(full_ids)
+    bio_ids = torch.randint(0, 1000, (2, 16))
+    bio_mask = torch.ones_like(bio_ids)
+    bio_labels = torch.zeros(2, 16, dtype=torch.long)
+    bio_labels[:, 0] = -100
+    sent = torch.zeros(2, dtype=torch.long)
+    out = m(full_ids, full_mask, bio_input_ids=bio_ids, bio_attention_mask=bio_mask,
+            bio_labels=bio_labels, sentiment_label=sent)
+    assert out["loss"].dim() == 0
+    assert out["loss"].item() > 0
+
+
+def test_single_pass_still_works():
+    """Backward compat: no bio_input_ids -> single-pass as before."""
+    m = RetrievalABSA()
+    ids = torch.randint(0, 1000, (2, 32))
+    mask = torch.ones_like(ids)
+    bio = torch.zeros(2, 32, dtype=torch.long)
+    sent = torch.zeros(2, dtype=torch.long)
+    out = m(ids, mask, bio_labels=bio, sentiment_label=sent)
+    assert out["bio_logits"].shape == (2, 32, 3)
+    assert out["loss"].dim() == 0
