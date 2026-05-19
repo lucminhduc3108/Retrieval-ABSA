@@ -69,7 +69,7 @@ class RetrievalABSA(nn.Module):
                 loss_bio = torch.tensor(0.0, device=input_ids.device)
             else:
                 loss_bio = self.bio_loss_fn(
-                    bio_logits.view(-1, bio_logits.size(-1)), bio_labels.view(-1))
+                    bio_logits.reshape(-1, bio_logits.size(-1)), bio_labels.reshape(-1))
                 if torch.isnan(loss_bio):
                     loss_bio = torch.tensor(0.0, device=input_ids.device)
             loss_cls = self.cls_loss_fn(sentiment_logits, sentiment_label)
