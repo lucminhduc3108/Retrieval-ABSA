@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 
+import numpy as np
 import torch
 from transformers import AutoTokenizer
 
@@ -49,6 +50,28 @@ def main():
 
     triplets = build_hard_negative_triplets(train_records, vectors, seed=args.seed)
     logger.info("Built %d hard negative triplets", len(triplets))
+
+    pos_sims = np.array([t["pos_sim"] for t in triplets])
+    neg1_sims = np.array([t["neg1_sim"] for t in triplets])
+    neg2_sims = np.array([t["neg2_sim"] for t in triplets])
+    logger.info("=== Triplet similarity summary ===")
+    logger.info("pos_sim  : mean=%.4f std=%.4f min=%.4f max=%.4f",
+                pos_sims.mean(), pos_sims.std(), pos_sims.min(), pos_sims.max())
+    logger.info("neg1_sim : mean=%.4f std=%.4f min=%.4f max=%.4f",
+                neg1_sims.mean(), neg1_sims.std(), neg1_sims.min(), neg1_sims.max())
+    logger.info("neg2_sim : mean=%.4f std=%.4f min=%.4f max=%.4f",
+                neg2_sims.mean(), neg2_sims.std(), neg2_sims.min(), neg2_sims.max())
+    violations = int(np.sum(neg1_sims >= pos_sims) + np.sum(neg2_sims >= pos_sims))
+    logger.info("Collapsed (neg_sim >= pos_sim): %d / %d (%.1f%%)",
+                violations, 2 * len(triplets), 100 * violations / (2 * len(triplets)))
+
+    rng = np.random.default_rng(42)
+    n = len(vectors)
+    idx = rng.integers(0, n, size=(min(n, 500), 2))
+    random_sims = np.array([float(vectors[a] @ vectors[b]) for a, b in idx if a != b])
+    logger.info("Random pair sim: mean=%.4f std=%.4f", random_sims.mean(), random_sims.std())
+    logger.info("Hard neg1 vs random: +%.4f", neg1_sims.mean() - random_sims.mean())
+    logger.info("Hard neg2 vs random: +%.4f", neg2_sims.mean() - random_sims.mean())
 
     os.makedirs(os.path.dirname(args.out_path), exist_ok=True)
     write_jsonl(triplets, args.out_path)

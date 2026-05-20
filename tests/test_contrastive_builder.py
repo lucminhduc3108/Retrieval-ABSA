@@ -76,6 +76,9 @@ def test_hard_neg_mining_returns_valid_triplets():
         assert t["anchor_polarity"] != t["neg1_polarity"]
         assert t["anchor_aspect"] != t["neg2_aspect"]
         assert t["anchor_polarity"] == t["neg2_polarity"]
+        assert "pos_sim" in t and -1.0 <= t["pos_sim"] <= 1.0
+        assert "neg1_sim" in t and -1.0 <= t["neg1_sim"] <= 1.0
+        assert "neg2_sim" in t and -1.0 <= t["neg2_sim"] <= 1.0
 
 
 def test_hard_neg_picks_most_similar():

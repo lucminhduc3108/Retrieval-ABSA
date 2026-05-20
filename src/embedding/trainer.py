@@ -63,14 +63,26 @@ class ContrastiveTrainer:
             self.model.train()
             total_loss = 0
             self.optimizer.zero_grad()
+            epoch_pos_sim = 0.0
+            epoch_neg1_sim = 0.0
+            epoch_neg2_sim = 0.0
             for step, batch in enumerate(train_loader):
-                loss, _ = self._run_batch(batch)
+                loss, out = self._run_batch(batch)
                 scaled_loss = loss / self.grad_accum_steps
                 if self.scaler:
                     self.scaler.scale(scaled_loss).backward()
                 else:
                     scaled_loss.backward()
                 total_loss += loss.item()
+
+                with torch.no_grad():
+                    a = out["anchor_vecs"].detach()
+                    p = out["pos_vecs"].detach()
+                    epoch_pos_sim += (a * p).sum(dim=1).mean().item()
+                    n1 = out.get("neg1_vecs")
+                    n2 = out.get("neg2_vecs")
+                    epoch_neg1_sim += (a * n1.detach()).sum(dim=1).mean().item() if n1 is not None else 0.0
+                    epoch_neg2_sim += (a * n2.detach()).sum(dim=1).mean().item() if n2 is not None else 0.0
 
                 is_accum_step = (step + 1) % self.grad_accum_steps == 0
                 is_last_step = (step + 1) == len(train_loader)
@@ -90,10 +102,30 @@ class ContrastiveTrainer:
                     self.optimizer.zero_grad()
 
             avg_loss = total_loss / len(train_loader)
+            n_steps = len(train_loader)
+            avg_pos_sim = epoch_pos_sim / n_steps
+            avg_neg1_sim = epoch_neg1_sim / n_steps
+            avg_neg2_sim = epoch_neg2_sim / n_steps
+            margin1 = avg_pos_sim - avg_neg1_sim
+            margin2 = avg_pos_sim - avg_neg2_sim
+
             recall = self.evaluate_recall(val_loader)
-            record = {"epoch": epoch, "train_loss": avg_loss, **recall}
+            record = {
+                "epoch": epoch, "train_loss": avg_loss,
+                "avg_pos_sim": avg_pos_sim, "avg_neg1_sim": avg_neg1_sim,
+                "avg_neg2_sim": avg_neg2_sim,
+                "margin_neg1": margin1, "margin_neg2": margin2,
+                **recall,
+            }
             history.append(record)
-            logger.info("Epoch %d: loss=%.4f recall@3=%.4f", epoch, avg_loss, recall["recall@3"])
+            logger.info(
+                "Epoch %d | loss=%.4f | pos=%.3f neg1=%.3f neg2=%.3f "
+                "| m1=%.3f m2=%.3f | R@1=%.3f R@3=%.3f R@5=%.3f",
+                epoch, avg_loss, avg_pos_sim, avg_neg1_sim, avg_neg2_sim,
+                margin1, margin2,
+                recall.get("recall@1", 0.0), recall["recall@3"],
+                recall.get("recall@5", 0.0),
+            )
 
             if self.log_path:
                 Path(self.log_path).parent.mkdir(parents=True, exist_ok=True)
@@ -139,4 +171,18 @@ class ContrastiveTrainer:
             topk_indices = sim.topk(min(k, N), dim=1).indices
             hits = sum(1 for i in range(N) if i in topk_indices[i].tolist())
             result[f"recall@{k}"] = hits / N
+
+        intra_mean = sim.diagonal().mean().item()
+        if N > 1:
+            mask = ~torch.eye(N, dtype=torch.bool)
+            inter_mean = sim[mask].mean().item()
+        else:
+            inter_mean = 0.0
+        ratio = intra_mean / (inter_mean + 1e-8)
+        result["intra_sim"] = intra_mean
+        result["inter_sim"] = inter_mean
+        result["intra_inter_ratio"] = ratio
+        logger.info("Eval | intra=%.4f inter=%.4f ratio=%.4f",
+                     intra_mean, inter_mean, ratio)
+
         return result

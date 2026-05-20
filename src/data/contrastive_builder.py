@@ -90,12 +90,15 @@ def build_hard_negative_triplets(cls_records: list[dict],
             continue
 
         pos_idx = rng.choice(pos_indices)
+        pos_sim = float(sim[i, pos_idx])
 
         neg1_sims = sim[i, neg1_indices]
         neg1_idx = neg1_indices[int(np.argmax(neg1_sims))]
+        neg1_sim = float(sim[i, neg1_idx])
 
         neg2_sims = sim[i, neg2_indices]
         neg2_idx = neg2_indices[int(np.argmax(neg2_sims))]
+        neg2_sim = float(sim[i, neg2_idx])
 
         pos = cls_records[pos_idx]
         neg1 = cls_records[neg1_idx]
@@ -110,6 +113,7 @@ def build_hard_negative_triplets(cls_records: list[dict],
             "neg1_aspect": neg1["aspect_category"], "neg1_polarity": neg1["polarity"],
             "neg2_id": neg2["id"], "neg2_sentence": neg2["sentence"],
             "neg2_aspect": neg2["aspect_category"], "neg2_polarity": neg2["polarity"],
+            "pos_sim": pos_sim, "neg1_sim": neg1_sim, "neg2_sim": neg2_sim,
         })
 
     return triplets

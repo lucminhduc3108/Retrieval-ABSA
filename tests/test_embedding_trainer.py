@@ -106,6 +106,10 @@ def test_evaluate_recall_returns_expected_keys(tmp_path):
     assert "recall@3" in result
     assert "recall@5" in result
     assert 0 <= result["recall@1"] <= 1
+    assert "intra_sim" in result
+    assert "inter_sim" in result
+    assert "intra_inter_ratio" in result
+    assert result["intra_inter_ratio"] > 0
 
 
 def test_trainer_with_grad_accum(tmp_path):
