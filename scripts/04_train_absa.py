@@ -39,9 +39,17 @@ def main():
                         help="Override early stopping patience")
     parser.add_argument("--split_bio", action="store_true",
                         help="Separate BIO head input from retrieval context")
+    parser.add_argument("--lambda_cls", type=float, default=None,
+                        help="Override lambda_cls from config")
+    parser.add_argument("--cls_class_weights", type=float, nargs="+", default=None,
+                        help="Override cls_class_weights (e.g. 1.0 1.7 4.33)")
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
+    if args.lambda_cls is not None:
+        cfg["lambda_cls"] = args.lambda_cls
+    if args.cls_class_weights is not None:
+        cfg["cls_class_weights"] = args.cls_class_weights
     ret_cfg = load_yaml(args.retrieval_config)
     split_bio = args.split_bio or cfg.get("split_bio", False)
     if args.no_retrieval:
@@ -102,7 +110,10 @@ def main():
     )
 
     train_ds = RetrievalABSADataset(train_records, **ds_kwargs)
+    train_ds.retrieval_dropout = cfg.get("retrieval_dropout", 0.0)
+
     val_ds = RetrievalABSADataset(val_records, **ds_kwargs)
+    val_ds.training = False
 
     if embedding_model is not None:
         embedding_model.cpu()

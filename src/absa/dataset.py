@@ -1,4 +1,5 @@
 import logging
+import random
 
 import numpy as np
 import torch
@@ -19,7 +20,8 @@ class RetrievalABSADataset(Dataset):
                  embedding_model=None,
                  max_length: int = 512, query_budget: int = 100,
                  top_k: int = 3, device: str = "cpu",
-                 split_bio: bool = False, bio_max_length: int = 128):
+                 split_bio: bool = False, bio_max_length: int = 128,
+                 retrieval_dropout: float = 0.0):
         self.records = bio_records
         self.retriever = retriever
         self.embedding_model = embedding_model
@@ -30,6 +32,8 @@ class RetrievalABSADataset(Dataset):
         self.device = device
         self.split_bio = split_bio
         self.bio_max_length = bio_max_length
+        self.retrieval_dropout = retrieval_dropout
+        self.training = True
 
         if "[ASP]" not in self.tokenizer.get_vocab():
             self.tokenizer.add_special_tokens(
@@ -37,6 +41,14 @@ class RetrievalABSADataset(Dataset):
 
     def __len__(self):
         return len(self.records)
+
+    def train(self):
+        self.training = True
+        return self
+
+    def eval(self):
+        self.training = False
+        return self
 
     def _align_bio_labels(self, sentence: str, tokens: list[str],
                           bio_tags: list[str], implicit: bool) -> tuple[list[int], list[int]]:
@@ -108,6 +120,9 @@ class RetrievalABSADataset(Dataset):
                            record["id"], len(query_ids), self.query_budget)
 
         neighbors = self._retrieve_neighbors(record)
+
+        if self.training and self.retrieval_dropout > 0 and random.random() < self.retrieval_dropout:
+            neighbors = []
 
         retrieved_ids = []
         if neighbors:

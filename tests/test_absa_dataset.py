@@ -154,3 +154,52 @@ def test_split_bio_query_part_matches():
     full_ids = item["input_ids"][:bio_len].tolist()
     bio_ids = item["bio_input_ids"][:bio_len].tolist()
     assert bio_ids == full_ids
+
+
+def _make_ds_with_neighbor(retrieval_dropout=0.0, training=True):
+    rec = _make_bio_record(bio_tags=["O", "B-ASP", "O", "O"])
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve.return_value = [
+        {"sentence": "Nice place", "aspect_category": "AMBIENCE#GENERAL",
+         "polarity": "positive", "tokens": ["Nice", "place"], "bio_tags": ["O", "O"]},
+    ]
+    mock_model = MagicMock()
+    mock_model.encode.return_value = torch.randn(1, 256)
+    ds = RetrievalABSADataset([rec], retriever=mock_retriever,
+                               tokenizer_name="microsoft/deberta-v3-base",
+                               embedding_model=mock_model,
+                               max_length=128, top_k=1,
+                               retrieval_dropout=retrieval_dropout)
+    ds.training = training
+    return ds
+
+
+def _no_retrieval_len():
+    rec = _make_bio_record(bio_tags=["O", "B-ASP", "O", "O"])
+    ds = RetrievalABSADataset([rec], retriever=None,
+                               tokenizer_name="microsoft/deberta-v3-base",
+                               embedding_model=None, max_length=128, top_k=0)
+    return ds[0]["attention_mask"].sum().item()
+
+
+def test_retrieval_dropout_zero_never_drops():
+    ds = _make_ds_with_neighbor(retrieval_dropout=0.0, training=True)
+    for _ in range(20):
+        item = ds[0]
+        assert item["attention_mask"].sum().item() > _no_retrieval_len()
+
+
+def test_retrieval_dropout_one_always_drops():
+    ds = _make_ds_with_neighbor(retrieval_dropout=1.0, training=True)
+    no_ret_len = _no_retrieval_len()
+    for _ in range(10):
+        item = ds[0]
+        assert item["attention_mask"].sum().item() == no_ret_len
+
+
+def test_retrieval_dropout_disabled_in_eval():
+    ds = _make_ds_with_neighbor(retrieval_dropout=1.0, training=False)
+    no_ret_len = _no_retrieval_len()
+    for _ in range(10):
+        item = ds[0]
+        assert item["attention_mask"].sum().item() > no_ret_len
