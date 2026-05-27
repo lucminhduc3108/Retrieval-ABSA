@@ -155,3 +155,23 @@ def test_split_train_returns_history():
     history = trainer.train(loader, loader, epochs=2)
     assert len(history) == 2
     assert "train_loss" in history[0]
+
+
+def test_differential_lr_param_groups():
+    model = RetrievalABSA()
+    encoder_lr = 2e-6
+    head_lr = 2e-4
+    param_groups = [
+        {"params": list(model.encoder.parameters()), "lr": encoder_lr},
+        {"params": list(model.bio_head.parameters()), "lr": head_lr},
+        {"params": list(model.sentiment_head.parameters()), "lr": head_lr},
+    ]
+    optimizer = torch.optim.AdamW(param_groups, weight_decay=0.01)
+    assert len(optimizer.param_groups) == 3
+    assert optimizer.param_groups[0]["lr"] == encoder_lr
+    assert optimizer.param_groups[1]["lr"] == head_lr
+    assert optimizer.param_groups[2]["lr"] == head_lr
+    encoder_param_count = sum(p.numel() for p in model.encoder.parameters())
+    head_param_count = sum(p.numel() for p in model.bio_head.parameters()) + \
+                       sum(p.numel() for p in model.sentiment_head.parameters())
+    assert encoder_param_count > head_param_count

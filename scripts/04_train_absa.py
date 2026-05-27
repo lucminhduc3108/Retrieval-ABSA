@@ -140,8 +140,16 @@ def main():
     if hasattr(train_ds, 'tokenizer') and len(train_ds.tokenizer) > model.encoder.config.vocab_size:
         model.encoder.resize_token_embeddings(len(train_ds.tokenizer))
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["lr"],
-                                  weight_decay=cfg["weight_decay"])
+    encoder_lr = cfg.get("encoder_lr", cfg["lr"])
+    head_lr = cfg.get("head_lr", cfg["lr"])
+    param_groups = [
+        {"params": list(model.encoder.parameters()), "lr": encoder_lr},
+        {"params": list(model.bio_head.parameters()), "lr": head_lr},
+        {"params": list(model.sentiment_head.parameters()), "lr": head_lr},
+    ]
+    if hasattr(model, "crf"):
+        param_groups.append({"params": list(model.crf.parameters()), "lr": head_lr})
+    optimizer = torch.optim.AdamW(param_groups, weight_decay=cfg["weight_decay"])
     epochs = args.epochs if args.epochs else cfg["epochs"]
     grad_accum = args.grad_accum_steps or cfg.get("grad_accum_steps", 1)
     total_steps = (len(train_loader) * epochs) // grad_accum
