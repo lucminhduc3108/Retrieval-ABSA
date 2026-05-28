@@ -1,6 +1,19 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import AutoModel
+
+
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=None, gamma: float = 2.0):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        ce = F.cross_entropy(logits, targets, weight=self.alpha, reduction='none')
+        pt = torch.exp(-ce)
+        return ((1 - pt) ** self.gamma * ce).mean()
 
 
 class RetrievalABSA(nn.Module):
@@ -8,7 +21,8 @@ class RetrievalABSA(nn.Module):
                  num_bio_labels: int = 3, num_sent_labels: int = 3,
                  lambda_cls: float = 0.5, dropout: float = 0.1,
                  cls_class_weights: list[float] | None = None,
-                 use_crf: bool = False):
+                 use_crf: bool = False,
+                 cls_loss_type: str = "ce", focal_gamma: float = 2.0):
         super().__init__()
         self.encoder = AutoModel.from_pretrained(model_name, dtype=torch.float32)
         hidden = self.encoder.config.hidden_size
@@ -24,7 +38,10 @@ class RetrievalABSA(nn.Module):
             self.crf = CRF(num_bio_labels, batch_first=True)
         self.bio_loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
         cls_weight = torch.tensor(cls_class_weights, dtype=torch.float32) if cls_class_weights else None
-        self.cls_loss_fn = nn.CrossEntropyLoss(weight=cls_weight)
+        if cls_loss_type == "focal":
+            self.cls_loss_fn = FocalLoss(alpha=cls_weight, gamma=focal_gamma)
+        else:
+            self.cls_loss_fn = nn.CrossEntropyLoss(weight=cls_weight)
 
     def forward(self, input_ids, attention_mask,
                 bio_input_ids=None, bio_attention_mask=None,

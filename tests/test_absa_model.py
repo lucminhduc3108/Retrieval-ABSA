@@ -1,6 +1,7 @@
 import torch
+import torch.nn as nn
 
-from src.absa.model import RetrievalABSA
+from src.absa.model import FocalLoss, RetrievalABSA
 
 
 def test_forward_shapes():
@@ -122,3 +123,39 @@ def test_single_pass_still_works():
     out = m(ids, mask, bio_labels=bio, sentiment_label=sent)
     assert out["bio_logits"].shape == (2, 32, 3)
     assert out["loss"].dim() == 0
+
+
+def test_focal_loss_is_positive_scalar():
+    loss_fn = FocalLoss(gamma=2.0)
+    logits = torch.randn(4, 3)
+    targets = torch.randint(0, 3, (4,))
+    loss = loss_fn(logits, targets)
+    assert loss.dim() == 0
+    assert loss.item() > 0
+
+
+def test_focal_loss_downweights_easy_examples():
+    torch.manual_seed(0)
+    loss_fn_focal = FocalLoss(gamma=2.0)
+    loss_fn_ce = nn.CrossEntropyLoss()
+    logits_easy = torch.tensor([[3.0, -1.0, -1.0], [3.0, -1.0, -1.0]])
+    targets = torch.tensor([0, 0])
+    focal = loss_fn_focal(logits_easy, targets)
+    ce = loss_fn_ce(logits_easy, targets)
+    assert focal.item() < ce.item()
+
+
+def test_model_with_focal_loss():
+    m = RetrievalABSA(cls_loss_type="focal", focal_gamma=2.0)
+    ids = torch.randint(0, 1000, (2, 32))
+    mask = torch.ones_like(ids)
+    bio = torch.zeros(2, 32, dtype=torch.long)
+    sent = torch.zeros(2, dtype=torch.long)
+    out = m(ids, mask, bio_labels=bio, sentiment_label=sent)
+    assert out["loss"].dim() == 0
+    assert out["loss"].item() > 0
+
+
+def test_backward_compat_no_loss_type_defaults_to_ce():
+    m = RetrievalABSA()
+    assert isinstance(m.cls_loss_fn, nn.CrossEntropyLoss)

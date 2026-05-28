@@ -17,11 +17,11 @@ patience: 5
 seed: 42
 bio_path: data/processed/bio_tagging.jsonl
 val_ratio: 0.2
-ckpt_dir: checkpoints/absa
-log_path: logs/absa_training.jsonl
+ckpt_dir: checkpoints/absa_focal
+log_path: logs/absa_focal.jsonl
 cls_class_weights: null
 grad_accum_steps: 1
 split_bio: false
 bio_max_length: 128
-cls_loss_type: ce
+cls_loss_type: focal
 focal_gamma: 2.0

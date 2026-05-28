@@ -43,6 +43,8 @@ def main():
                         help="Override lambda_cls from config")
     parser.add_argument("--cls_class_weights", type=float, nargs="+", default=None,
                         help="Override cls_class_weights (e.g. 1.0 1.7 4.33)")
+    parser.add_argument("--cls_loss_type", default=None,
+                        help="Override cls_loss_type from config (ce or focal)")
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
@@ -50,6 +52,8 @@ def main():
         cfg["lambda_cls"] = args.lambda_cls
     if args.cls_class_weights is not None:
         cfg["cls_class_weights"] = args.cls_class_weights
+    if args.cls_loss_type is not None:
+        cfg["cls_loss_type"] = args.cls_loss_type
     ret_cfg = load_yaml(args.retrieval_config)
     split_bio = args.split_bio or cfg.get("split_bio", False)
     if args.no_retrieval:
@@ -135,6 +139,8 @@ def main():
         dropout=cfg["dropout"],
         cls_class_weights=cfg.get("cls_class_weights"),
         use_crf=cfg.get("use_crf", False),
+        cls_loss_type=cfg.get("cls_loss_type", "ce"),
+        focal_gamma=cfg.get("focal_gamma", 2.0),
     ).to(device)
 
     if hasattr(train_ds, 'tokenizer') and len(train_ds.tokenizer) > model.encoder.config.vocab_size:
