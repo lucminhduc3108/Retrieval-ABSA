@@ -24,4 +24,4 @@ grad_accum_steps: 1
 split_bio: false
 bio_max_length: 128
 cls_loss_type: focal
-focal_gamma: 2.0
+focal_gamma: 0.5
