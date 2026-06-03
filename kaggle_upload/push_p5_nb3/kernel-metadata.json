@@ -1,0 +1,17 @@
+{
+  "id": "lcminhc/p5-nb3-joint-eval",
+  "title": "P5 NB3 Joint Eval",
+  "code_file": "p5_nb3_eval.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "lcminhc/p5-nb1-stage1",
+    "lcminhc/p5-nb2-stage2",
+    "lcminhc/p3s2-embedding-flat"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

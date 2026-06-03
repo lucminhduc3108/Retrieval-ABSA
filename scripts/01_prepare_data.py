@@ -9,6 +9,7 @@ from src.data.xml_parser import parse_semeval_xml
 from src.data.bio_builder import build_bio_records, build_implicit_records
 from src.data.cls_builder import build_cls_records
 from src.data.contrastive_builder import build_contrastive_triplets
+from src.data.category_builder import build_category_records, build_sentiment_records
 from src.utils.io import write_jsonl
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -28,6 +29,8 @@ def main():
 
     all_bio = []
     all_cls = []
+    all_category = []
+    all_sentiment = []
     total_sentences = 0
     total_opinions = 0
 
@@ -48,6 +51,11 @@ def main():
         all_bio.extend(implicit)
         all_cls.extend(cls)
 
+        cat_records = build_category_records(parsed, split=split)
+        sent_records = build_sentiment_records(parsed, split=split)
+        all_category.extend(cat_records)
+        all_sentiment.extend(sent_records)
+
     train_bio = [r for r in all_bio if r["split"] == "train"]
     test_bio = [r for r in all_bio if r["split"] == "test"]
     train_cls = [r for r in all_cls if r["split"] == "train"]
@@ -60,6 +68,8 @@ def main():
     write_jsonl(all_bio, os.path.join(args.out_dir, "bio_tagging.jsonl"))
     write_jsonl(all_cls, os.path.join(args.out_dir, "classification.jsonl"))
     write_jsonl(triplets, os.path.join(args.out_dir, "contrastive_triplets.jsonl"))
+    write_jsonl(all_category, os.path.join(args.out_dir, "category_detection.jsonl"))
+    write_jsonl(all_sentiment, os.path.join(args.out_dir, "sentiment_records.jsonl"))
 
     # --- Summary ---
     logger.info("=== Data Preparation Summary (SemEval 2016 SB1) ===")
@@ -70,6 +80,14 @@ def main():
     logger.info("Explicit BIO (train): %d", len([r for r in train_bio if not r.get("implicit")]))
     logger.info("Implicit BIO (train): %d", len([r for r in train_bio if r.get("implicit")]))
     logger.info("Contrastive triplets: %d", len(triplets))
+    logger.info("Category detection records: %d (train: %d, test: %d)",
+                len(all_category),
+                len([r for r in all_category if r["split"] == "train"]),
+                len([r for r in all_category if r["split"] == "test"]))
+    logger.info("Sentiment records: %d (train: %d, test: %d)",
+                len(all_sentiment),
+                len([r for r in all_sentiment if r["split"] == "train"]),
+                len([r for r in all_sentiment if r["split"] == "test"]))
 
 
 if __name__ == "__main__":

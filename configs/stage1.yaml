@@ -1,0 +1,17 @@
+model_name: microsoft/deberta-v3-base
+num_categories: 12
+batch_size: 32
+epochs: 15
+encoder_lr: 2.0e-5
+head_lr: 2.0e-4
+weight_decay: 0.01
+warmup_ratio: 0.1
+max_seq_length: 128
+grad_clip: 1.0
+patience: 5
+seed: 42
+val_ratio: 0.2
+ckpt_dir: checkpoints/stage1
+log_path: logs/stage1_training.jsonl
+category_path: data/processed/category_detection.jsonl
+grad_accum_steps: 1

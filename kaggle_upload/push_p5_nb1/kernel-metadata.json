@@ -1,0 +1,15 @@
+{
+  "id": "lcminhc/p5-nb1-stage1-train",
+  "title": "P5 NB1 Stage1 Train",
+  "code_file": "p5_nb1_stage1.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "lcminhc/semeval-absa-restaurant"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

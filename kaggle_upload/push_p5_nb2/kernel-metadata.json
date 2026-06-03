@@ -1,0 +1,16 @@
+{
+  "id": "lcminhc/p5-nb2-stage2-train",
+  "title": "P5 NB2 Stage2 Train",
+  "code_file": "p5_nb2_stage2.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "lcminhc/p5-nb1-stage1",
+    "lcminhc/p3s2-embedding-flat"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}
