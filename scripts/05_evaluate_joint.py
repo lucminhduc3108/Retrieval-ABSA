@@ -122,7 +122,7 @@ def main():
         model_name=s1_cfg["model_name"],
         num_categories=s1_cfg["num_categories"],
     ).to(device)
-    s1_model.load_state_dict(s1_ckpt["model_state"])
+    s1_model.load_state_dict(s1_ckpt["model_state"], strict=False)
     thresholds = s1_ckpt["thresholds"]
     logger.info("Stage 1 loaded, thresholds: %s",
                 [f"{t:.2f}" for t in thresholds])
