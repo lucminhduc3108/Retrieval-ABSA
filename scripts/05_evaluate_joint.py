@@ -154,7 +154,7 @@ def main():
         use_retrieval=use_retrieval,
     ).to(device)
     s2_state = torch.load(args.stage2_ckpt, map_location=device)
-    s2_model.load_state_dict(s2_state)
+    s2_model.load_state_dict(s2_state, strict=False)
     logger.info("Stage 2 loaded")
 
     cat_records = read_jsonl(s1_cfg["category_path"])
