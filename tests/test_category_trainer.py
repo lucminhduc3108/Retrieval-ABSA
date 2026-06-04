@@ -13,7 +13,7 @@ def test_tune_thresholds_returns_correct_length():
     labels[:10, 0] = 1.0
     thresholds = _tune_thresholds(logits, labels)
     assert len(thresholds) == NUM_CATEGORIES
-    assert all(0.1 <= t <= 0.5 for t in thresholds)
+    assert all(0.05 <= t <= 0.90 for t in thresholds)
 
 
 def test_apply_thresholds_returns_sets():

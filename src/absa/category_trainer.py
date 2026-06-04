@@ -11,7 +11,7 @@ from src.evaluation.category_metrics import category_f1, per_category_f1
 
 logger = logging.getLogger(__name__)
 
-THRESHOLD_GRID = [0.1, 0.2, 0.3, 0.4, 0.5]
+THRESHOLD_GRID = [round(0.05 + i * 0.05, 2) for i in range(18)]  # 0.05 to 0.90
 
 
 def _tune_thresholds(all_logits: torch.Tensor,

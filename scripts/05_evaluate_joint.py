@@ -10,7 +10,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.absa.category_dataset import CategoryDataset
 from src.absa.category_model import CategoryDetector
-from src.absa.category_trainer import _apply_thresholds
+from sklearn.model_selection import train_test_split
+from src.absa.category_trainer import _apply_thresholds, _tune_thresholds
 from src.absa.sentiment_dataset import SentimentDataset
 from src.absa.sentiment_model import SentimentPredictor
 from src.data.category_builder import (
@@ -123,9 +124,32 @@ def main():
         num_categories=s1_cfg["num_categories"],
     ).to(device)
     s1_model.load_state_dict(s1_ckpt["model_state"], strict=False)
-    thresholds = s1_ckpt["thresholds"]
-    logger.info("Stage 1 loaded, thresholds: %s",
-                [f"{t:.2f}" for t in thresholds])
+    ckpt_thresholds = s1_ckpt["thresholds"]
+    logger.info("Checkpoint thresholds: %s",
+                [f"{t:.2f}" for t in ckpt_thresholds])
+
+    train_records = [r for r in read_jsonl(s1_cfg["category_path"])
+                     if r["split"] == "train"]
+    _, val_records = train_test_split(
+        train_records, test_size=s1_cfg["val_ratio"],
+        random_state=s1_cfg["seed"])
+    val_ds = CategoryDataset(val_records, tokenizer_name=s1_cfg["model_name"],
+                             max_length=s1_cfg["max_seq_length"])
+    val_loader = DataLoader(val_ds, batch_size=32)
+    val_logits, val_labels = [], []
+    s1_model.eval()
+    with torch.no_grad():
+        for batch in val_loader:
+            batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
+                     for k, v in batch.items()}
+            out = s1_model(batch["input_ids"], batch["attention_mask"])
+            val_logits.append(out["logits"].cpu())
+            val_labels.append(batch["category_labels"])
+    val_logits = torch.cat(val_logits, dim=0)
+    val_labels = torch.cat(val_labels, dim=0)
+    thresholds = _tune_thresholds(val_logits, val_labels)
+    logger.info("Re-tuned thresholds on %d val samples: %s",
+                len(val_records), [f"{t:.2f}" for t in thresholds])
 
     embedding_model = None
     retriever = None
@@ -206,26 +230,8 @@ def main():
     cat_m = category_f1(pred_cats_list, gold_cats_list)
     joint_m = joint_category_sentiment_f1(pred_pairs_list, gold_pairs_list)
 
-    all_pred_pairs = []
-    gold_by_cat_list = []
-    for pairs, golds in zip(pred_pairs_list, gold_pairs_list):
-        gold_by_cat = {}
-        for gc, gp in golds:
-            gold_by_cat.setdefault(gc, set()).add(gp)
-        for cat, pol in pairs:
-            all_pred_pairs.append((cat, pol))
-        gold_by_cat_list.append(gold_by_cat)
-
-    flat_pred_pairs = []
-    flat_gold_by_cat = {}
-    for pairs, golds in zip(pred_pairs_list, gold_pairs_list):
-        for cat, pol in pairs:
-            flat_pred_pairs.append((cat, pol))
-        for gc, gp in golds:
-            flat_gold_by_cat.setdefault(gc, set()).add(gp)
-
     sent_cond = sentiment_acc_given_correct_category(
-        flat_pred_pairs, flat_gold_by_cat)
+        pred_pairs_list, gold_pairs_list)
 
     per_cat = per_category_f1(pred_cats_list, gold_cats_list, CATEGORY_LIST)
 

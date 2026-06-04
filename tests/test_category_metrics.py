@@ -75,27 +75,38 @@ def test_joint_f1_conflict_gold():
 
 
 def test_sentiment_acc_given_correct_cat():
-    pred_pairs = [("FOOD#QUALITY", "positive"), ("SERVICE#GENERAL", "negative")]
-    gold_by_cat = {
-        "FOOD#QUALITY": {"positive"},
-        "SERVICE#GENERAL": {"positive"},
-    }
-    m = sentiment_acc_given_correct_category(pred_pairs, gold_by_cat)
+    pred = [{("FOOD#QUALITY", "positive"), ("SERVICE#GENERAL", "negative")}]
+    gold = [{("FOOD#QUALITY", "positive"), ("SERVICE#GENERAL", "positive")}]
+    m = sentiment_acc_given_correct_category(pred, gold)
     assert m["total"] == 2
     assert m["correct"] == 1
     assert m["accuracy"] == 0.5
 
 
 def test_sentiment_acc_skips_wrong_category():
-    pred_pairs = [("DRINKS#PRICES", "positive")]
-    gold_by_cat = {"FOOD#QUALITY": {"positive"}}
-    m = sentiment_acc_given_correct_category(pred_pairs, gold_by_cat)
+    pred = [{("DRINKS#PRICES", "positive")}]
+    gold = [{("FOOD#QUALITY", "positive")}]
+    m = sentiment_acc_given_correct_category(pred, gold)
     assert m["total"] == 0
     assert m["accuracy"] == 0.0
 
 
 def test_sentiment_acc_conflict_gold_accepts_either():
-    pred_pairs = [("SERVICE#GENERAL", "negative")]
-    gold_by_cat = {"SERVICE#GENERAL": {"negative", "positive"}}
-    m = sentiment_acc_given_correct_category(pred_pairs, gold_by_cat)
+    pred = [{("SERVICE#GENERAL", "negative")}]
+    gold = [{("SERVICE#GENERAL", "negative"), ("SERVICE#GENERAL", "positive")}]
+    m = sentiment_acc_given_correct_category(pred, gold)
     assert m["correct"] == 1
+
+
+def test_sentiment_acc_per_sentence_not_global():
+    pred = [
+        {("SERVICE#GENERAL", "positive")},
+        {("FOOD#QUALITY", "negative")},
+    ]
+    gold = [
+        {("FOOD#QUALITY", "positive")},
+        {("SERVICE#GENERAL", "negative")},
+    ]
+    m = sentiment_acc_given_correct_category(pred, gold)
+    assert m["total"] == 0
+    assert m["accuracy"] == 0.0

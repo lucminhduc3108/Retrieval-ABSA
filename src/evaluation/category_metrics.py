@@ -52,15 +52,19 @@ def joint_category_sentiment_f1(
 
 
 def sentiment_acc_given_correct_category(
-    pred_pairs: list[tuple[str, str]],
-    gold_pairs_by_cat: dict[str, set[str]],
+    pred_pairs_list: list[set[tuple[str, str]]],
+    gold_pairs_list: list[set[tuple[str, str]]],
 ) -> dict:
     correct = 0
     total = 0
-    for cat, pol in pred_pairs:
-        if cat in gold_pairs_by_cat:
-            total += 1
-            if pol in gold_pairs_by_cat[cat]:
-                correct += 1
+    for pred_pairs, gold_pairs in zip(pred_pairs_list, gold_pairs_list):
+        gold_by_cat: dict[str, set[str]] = {}
+        for gc, gp in gold_pairs:
+            gold_by_cat.setdefault(gc, set()).add(gp)
+        for cat, pol in pred_pairs:
+            if cat in gold_by_cat:
+                total += 1
+                if pol in gold_by_cat[cat]:
+                    correct += 1
     acc = correct / total if total else 0.0
     return {"accuracy": acc, "correct": correct, "total": total}
