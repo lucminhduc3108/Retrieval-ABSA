@@ -56,3 +56,14 @@ def test_gradient_flows_through_label_interp():
     out["loss"].backward()
     assert model.label_interp.polarity_embedding.weight.grad is not None
     assert model.sentiment_head[0].weight.grad is not None
+
+
+def test_forward_with_class_weights():
+    weights = torch.tensor([1.0, 1.5, 4.0])
+    model = SentimentPredictor(use_retrieval=False, class_weights=weights)
+    ids = torch.randint(0, 128, (2, 16))
+    mask = torch.ones(2, 16, dtype=torch.long)
+    label = torch.tensor([0, 2])
+    out = model(ids, mask, sentiment_label=label)
+    assert out["loss"] is not None
+    assert out["loss"].ndim == 0

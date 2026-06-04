@@ -1,7 +1,9 @@
 import argparse
 import logging
+import math
 import os
 import sys
+from collections import Counter
 
 import torch
 from sklearn.model_selection import train_test_split
@@ -81,6 +83,16 @@ def main():
 
     logger.info("Train: %d records, Val: %d records", len(train_recs), len(val_recs))
 
+    pol_counts = Counter(r["polarity"] for r in train_recs)
+    pol_order = ["positive", "negative", "neutral"]
+    freq = [pol_counts.get(p, 1) for p in pol_order]
+    raw = [math.sqrt(len(train_recs) / f) for f in freq]
+    norm = raw[0]
+    cls_weights = [w / norm for w in raw]
+    logger.info("Sqrt class weights: pos=%.3f neg=%.3f neu=%.3f",
+                cls_weights[0], cls_weights[1], cls_weights[2])
+    class_weights_tensor = torch.tensor(cls_weights, dtype=torch.float32).to(device)
+
     ds_kwargs = dict(
         retriever=retriever,
         tokenizer_name=cfg["model_name"],
@@ -113,6 +125,7 @@ def main():
         tau=cfg.get("tau", 0.05),
         dropout=cfg.get("dropout", 0.1),
         use_retrieval=use_retrieval,
+        class_weights=class_weights_tensor,
     ).to(device)
 
     encoder_lr = cfg.get("encoder_lr", cfg.get("lr", 2e-5))

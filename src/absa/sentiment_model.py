@@ -9,7 +9,8 @@ class SentimentPredictor(nn.Module):
     def __init__(self, model_name: str = "microsoft/deberta-v3-base",
                  num_sent_labels: int = 3,
                  embed_dim: int = 64, tau: float = 0.05,
-                 dropout: float = 0.1, use_retrieval: bool = True):
+                 dropout: float = 0.1, use_retrieval: bool = True,
+                 class_weights: torch.Tensor | None = None):
         super().__init__()
         self.encoder = AutoModel.from_pretrained(model_name, dtype=torch.float32)
         hidden = self.encoder.config.hidden_size
@@ -29,7 +30,7 @@ class SentimentPredictor(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(256, num_sent_labels),
         )
-        self.loss_fn = nn.CrossEntropyLoss()
+        self.loss_fn = nn.CrossEntropyLoss(weight=class_weights)
 
     def forward(self, input_ids, attention_mask,
                 neighbor_polarities=None, neighbor_scores=None,

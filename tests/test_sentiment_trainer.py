@@ -62,3 +62,18 @@ def test_evaluate_with_retrieval():
     metrics = trainer.evaluate(loader)
     assert "sentiment_acc" in metrics
     assert "loss" in metrics
+
+
+def test_train_saves_checkpoint_on_best_f1(tmp_path):
+    model = SentimentPredictor(use_retrieval=False)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    ckpt_path = str(tmp_path / "best.pt")
+    trainer = SentimentTrainer(
+        model=model, optimizer=optimizer, scheduler=None,
+        device="cpu", log_path="", patience=10,
+    )
+    loader = _make_loader(use_retrieval=False)
+    history = trainer.train(loader, loader, epochs=2, ckpt_path=ckpt_path)
+    assert (tmp_path / "best.pt").exists()
+    assert "sentiment_macro_f1" in history[0]
+    assert "sentiment_acc" in history[0]

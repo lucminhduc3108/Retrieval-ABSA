@@ -42,7 +42,7 @@ class SentimentTrainer:
     def train(self, train_loader, val_loader, epochs: int,
               ckpt_path: str | None = None) -> list[dict]:
         history = []
-        best_acc = -1.0
+        best_f1 = -1.0
         patience_counter = 0
 
         for epoch in range(1, epochs + 1):
@@ -88,13 +88,13 @@ class SentimentTrainer:
                 with open(self.log_path, "a") as f:
                     f.write(json.dumps(record) + "\n")
 
-            if val_metrics["sentiment_acc"] > best_acc:
-                best_acc = val_metrics["sentiment_acc"]
+            if val_metrics["sentiment_macro_f1"] > best_f1:
+                best_f1 = val_metrics["sentiment_macro_f1"]
                 patience_counter = 0
                 if ckpt_path:
                     Path(ckpt_path).parent.mkdir(parents=True, exist_ok=True)
                     torch.save(self.model.state_dict(), ckpt_path)
-                    logger.info("Saved best model (acc=%.4f)", best_acc)
+                    logger.info("Saved best model (macro_f1=%.4f)", best_f1)
             else:
                 patience_counter += 1
                 if patience_counter >= self.patience:
