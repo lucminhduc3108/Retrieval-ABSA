@@ -2,7 +2,9 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.absa.category_trainer import (
-    _tune_thresholds, _apply_thresholds, CategoryTrainer,
+    _tune_thresholds, _apply_thresholds,
+    _tune_global_threshold, _apply_global_threshold,
+    CategoryTrainer,
 )
 from src.data.category_builder import NUM_CATEGORIES, CATEGORY_LIST
 
@@ -34,6 +36,51 @@ def test_apply_thresholds_empty_when_all_below():
     assert all(len(s) == 0 for s in result)
 
 
+def test_tune_global_threshold_returns_float():
+    logits = torch.randn(20, NUM_CATEGORIES)
+    labels = torch.zeros(20, NUM_CATEGORIES)
+    labels[:10, 0] = 1.0
+    t = _tune_global_threshold(logits, labels)
+    assert isinstance(t, float)
+    assert 0.05 <= t <= 0.90
+
+
+def test_tune_global_threshold_avoids_low_precision():
+    logits = torch.full((30, NUM_CATEGORIES), -5.0)
+    labels = torch.zeros(30, NUM_CATEGORIES)
+    for i in range(10):
+        logits[i, 0] = 2.0
+        labels[i, 0] = 1.0
+    logits[:, 1] = 0.0  # sigmoid(0)=0.5 → low threshold fires 30 FPs
+    t = _tune_global_threshold(logits, labels)
+    assert t > 0.50
+
+
+def test_apply_global_threshold_basic():
+    logits = torch.full((2, NUM_CATEGORIES), -5.0)
+    logits[0, 0] = 5.0
+    logits[0, 1] = 5.0
+    logits[1, 5] = 5.0
+    result = _apply_global_threshold(logits, 0.5)
+    assert CATEGORY_LIST[0] in result[0]
+    assert CATEGORY_LIST[1] in result[0]
+    assert len(result[0]) == 2
+    assert CATEGORY_LIST[5] in result[1]
+    assert len(result[1]) == 1
+
+
+def test_apply_global_threshold_kmax_cap():
+    logits = torch.full((1, NUM_CATEGORIES), 10.0)
+    result = _apply_global_threshold(logits, 0.5, k_max=5)
+    assert len(result[0]) == 5
+
+
+def test_apply_global_threshold_can_return_empty():
+    logits = torch.full((2, NUM_CATEGORIES), -10.0)
+    result = _apply_global_threshold(logits, 0.5)
+    assert all(len(s) == 0 for s in result)
+
+
 def _make_loader(n=8, seq_len=16):
     input_ids = torch.randint(0, 100, (n, seq_len))
     attention_mask = torch.ones(n, seq_len, dtype=torch.long)
@@ -61,5 +108,7 @@ def test_trainer_evaluate():
     loader = _make_loader()
     metrics = trainer.evaluate(loader)
     assert "category_f1" in metrics
+    assert "threshold" in metrics
+    assert isinstance(metrics["threshold"], float)
     assert "thresholds" in metrics
     assert len(metrics["thresholds"]) == NUM_CATEGORIES

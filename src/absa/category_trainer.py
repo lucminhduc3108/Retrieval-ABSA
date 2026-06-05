@@ -49,6 +49,40 @@ def _apply_thresholds(logits: torch.Tensor,
     return result
 
 
+def _tune_global_threshold(all_logits: torch.Tensor,
+                           all_labels: torch.Tensor) -> float:
+    probs = torch.sigmoid(all_logits)
+    best_threshold = 0.5
+    best_f1 = -1.0
+    for t in THRESHOLD_GRID:
+        preds = (probs >= t).long()
+        tp = ((preds == 1) & (all_labels == 1)).sum().item()
+        fp = ((preds == 1) & (all_labels == 0)).sum().item()
+        fn = ((preds == 0) & (all_labels == 1)).sum().item()
+        p = tp / (tp + fp) if (tp + fp) else 0.0
+        r = tp / (tp + fn) if (tp + fn) else 0.0
+        f = 2 * p * r / (p + r) if (p + r) else 0.0
+        if f > best_f1:
+            best_f1 = f
+            best_threshold = t
+    return best_threshold
+
+
+def _apply_global_threshold(logits: torch.Tensor,
+                            threshold: float,
+                            k_max: int = 5) -> list[set[str]]:
+    probs = torch.sigmoid(logits)
+    result = []
+    for i in range(probs.size(0)):
+        above = [(j, probs[i, j].item()) for j in range(NUM_CATEGORIES)
+                 if probs[i, j] >= threshold]
+        if len(above) > k_max:
+            above.sort(key=lambda x: x[1], reverse=True)
+            above = above[:k_max]
+        result.append({CATEGORY_LIST[j] for j, _ in above})
+    return result
+
+
 class CategoryTrainer:
     def __init__(self, model, optimizer, scheduler, device,
                  patience: int = 5, grad_clip: float = 1.0,
@@ -116,9 +150,9 @@ class CategoryTrainer:
             val_metrics = self.evaluate(val_loader)
             record = {"epoch": epoch, "train_loss": avg_loss, **val_metrics}
             history.append(record)
-            logger.info("Epoch %d: loss=%.4f cat_f1=%.4f (thresholds=%s)",
+            logger.info("Epoch %d: loss=%.4f cat_f1=%.4f (threshold=%.2f)",
                         epoch, avg_loss, val_metrics["category_f1"],
-                        [f"{t:.1f}" for t in val_metrics["thresholds"]])
+                        val_metrics["threshold"])
 
             if self.log_path:
                 Path(self.log_path).parent.mkdir(parents=True, exist_ok=True)
@@ -132,6 +166,7 @@ class CategoryTrainer:
                     Path(ckpt_path).parent.mkdir(parents=True, exist_ok=True)
                     torch.save({
                         "model_state": self.model.state_dict(),
+                        "threshold": val_metrics["threshold"],
                         "thresholds": val_metrics["thresholds"],
                     }, ckpt_path)
                     logger.info("Saved best model (cat_f1=%.4f)", best_f1)
@@ -162,8 +197,8 @@ class CategoryTrainer:
         all_logits = torch.cat(all_logits, dim=0)
         all_labels = torch.cat(all_labels, dim=0)
 
-        thresholds = _tune_thresholds(all_logits, all_labels)
-        pred_cats = _apply_thresholds(all_logits, thresholds)
+        threshold = _tune_global_threshold(all_logits, all_labels)
+        pred_cats = _apply_global_threshold(all_logits, threshold)
         gold_cats = _apply_thresholds(
             all_labels * 100, [0.5] * NUM_CATEGORIES)
 
@@ -174,5 +209,6 @@ class CategoryTrainer:
             "category_f1": cat_m["f1"],
             "category_precision": cat_m["precision"],
             "category_recall": cat_m["recall"],
-            "thresholds": thresholds,
+            "threshold": threshold,
+            "thresholds": [threshold] * NUM_CATEGORIES,
         }

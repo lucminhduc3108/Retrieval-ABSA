@@ -11,7 +11,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.absa.category_dataset import CategoryDataset
 from src.absa.category_model import CategoryDetector
 from sklearn.model_selection import train_test_split
-from src.absa.category_trainer import _apply_thresholds, _tune_thresholds
+from src.absa.category_trainer import (
+    _apply_global_threshold, _tune_global_threshold,
+)
 from src.absa.sentiment_dataset import SentimentDataset
 from src.absa.sentiment_model import SentimentPredictor
 from src.data.category_builder import (
@@ -34,7 +36,7 @@ logger = logging.getLogger(__name__)
 ID2POL = {v: k for k, v in POL2ID.items()}
 
 
-def predict_categories(model, dataset, thresholds, device, batch_size=32):
+def predict_categories(model, dataset, threshold, device, batch_size=32):
     loader = DataLoader(dataset, batch_size=batch_size)
     all_logits = []
     model.eval()
@@ -45,7 +47,7 @@ def predict_categories(model, dataset, thresholds, device, batch_size=32):
             out = model(batch["input_ids"], batch["attention_mask"])
             all_logits.append(out["logits"].cpu())
     all_logits = torch.cat(all_logits, dim=0)
-    return _apply_thresholds(all_logits, thresholds)
+    return _apply_global_threshold(all_logits, threshold)
 
 
 def predict_sentiment(model, records, retriever, embedding_model,
@@ -124,9 +126,11 @@ def main():
         num_categories=s1_cfg["num_categories"],
     ).to(device)
     s1_model.load_state_dict(s1_ckpt["model_state"], strict=False)
-    ckpt_thresholds = s1_ckpt["thresholds"]
-    logger.info("Checkpoint thresholds: %s",
-                [f"{t:.2f}" for t in ckpt_thresholds])
+    ckpt_threshold = s1_ckpt.get("threshold")
+    if ckpt_threshold is not None:
+        logger.info("Checkpoint global threshold: %.2f", ckpt_threshold)
+    else:
+        logger.info("Old checkpoint (per-category thresholds), will re-tune globally")
 
     train_records = [r for r in read_jsonl(s1_cfg["category_path"])
                      if r["split"] == "train"]
@@ -147,9 +151,9 @@ def main():
             val_labels.append(batch["category_labels"].cpu())
     val_logits = torch.cat(val_logits, dim=0)
     val_labels = torch.cat(val_labels, dim=0)
-    thresholds = _tune_thresholds(val_logits, val_labels)
-    logger.info("Re-tuned thresholds on %d val samples: %s",
-                len(val_records), [f"{t:.2f}" for t in thresholds])
+    threshold = _tune_global_threshold(val_logits, val_labels)
+    logger.info("Re-tuned global threshold on %d val samples: %.2f",
+                len(val_records), threshold)
 
     embedding_model = None
     retriever = None
@@ -189,11 +193,14 @@ def main():
     cat_ds = CategoryDataset(test_cat, tokenizer_name=s1_cfg["model_name"],
                              max_length=s1_cfg["max_seq_length"])
     pred_cats_list = predict_categories(
-        s1_model, cat_ds, thresholds, device)
+        s1_model, cat_ds, threshold, device)
+    avg_preds = sum(len(s) for s in pred_cats_list) / max(len(pred_cats_list), 1)
+    logger.info("Avg predicted categories/sentence: %.2f (gold avg ~1.27)",
+                avg_preds)
 
     stage2_records = []
     for cr, pred_cats in zip(test_cat, pred_cats_list):
-        for cat in pred_cats:
+        for cat in sorted(pred_cats):
             stage2_records.append({
                 "id": f"{cr['sentence_id']}_{cat}",
                 "sentence": cr["sentence"],
@@ -220,7 +227,7 @@ def main():
     rec_idx = 0
     for pred_cats in pred_cats_list:
         pairs = set()
-        for cat in pred_cats:
+        for cat in sorted(pred_cats):
             if rec_idx < len(stage2_records):
                 pol = stage2_records[rec_idx].get("predicted_polarity", "positive")
                 pairs.add((cat, pol))
@@ -257,7 +264,8 @@ def main():
     report_text = "\n".join(report)
     print(report_text)
 
-    out_path = "logs/joint_eval_results.md"
+    tag = "noret" if args.no_retrieval else "retrieval"
+    out_path = f"logs/joint_eval_{tag}.md"
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
         f.write(report_text)

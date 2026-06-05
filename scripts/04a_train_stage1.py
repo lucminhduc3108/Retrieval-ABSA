@@ -31,7 +31,7 @@ def compute_pos_weight(records: list[dict]) -> torch.Tensor:
     weights = []
     for c in counts:
         if c > 0:
-            weights.append(math.sqrt((n - c) / c))
+            weights.append(min(math.sqrt((n - c) / c), 5.0))
         else:
             weights.append(1.0)
     return torch.tensor(weights, dtype=torch.float32)
@@ -56,9 +56,10 @@ def main():
     if args.limit:
         train_records = train_records[:args.limit]
 
+    stratify_key = [sum(r["category_vector"]) for r in train_records]
     train_records, val_records = train_test_split(
         train_records, test_size=cfg["val_ratio"],
-        random_state=cfg["seed"],
+        random_state=cfg["seed"], stratify=stratify_key,
     )
     logger.info("Train: %d, Val: %d", len(train_records), len(val_records))
 
