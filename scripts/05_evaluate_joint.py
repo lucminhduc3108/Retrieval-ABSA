@@ -238,7 +238,7 @@ def main():
     # --- Reconstruct val split (must match training script) ---
     train_records = [r for r in read_jsonl(s1_cfg["category_path"])
                      if r["split"] == "train"]
-    stratify_key = [sum(r["category_vector"]) for r in train_records]
+    stratify_key = [min(sum(r["category_vector"]), 2) for r in train_records]
     _, val_records = train_test_split(
         train_records, test_size=s1_cfg["val_ratio"],
         random_state=s1_cfg["seed"],

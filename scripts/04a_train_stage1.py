@@ -56,7 +56,7 @@ def main():
     if args.limit:
         train_records = train_records[:args.limit]
 
-    stratify_key = [sum(r["category_vector"]) for r in train_records]
+    stratify_key = [min(sum(r["category_vector"]), 2) for r in train_records]
     train_records, val_records = train_test_split(
         train_records, test_size=cfg["val_ratio"],
         random_state=cfg["seed"], stratify=stratify_key,
