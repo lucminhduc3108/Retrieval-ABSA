@@ -9,6 +9,8 @@ from torch.nn.utils import clip_grad_norm_
 from src.data.category_builder import CATEGORY_LIST, NUM_CATEGORIES
 from src.evaluation.category_metrics import category_f1, per_category_f1
 
+_TOPK_RANGE = range(1, 5)
+
 logger = logging.getLogger(__name__)
 
 THRESHOLD_GRID = [round(0.05 + i * 0.05, 2) for i in range(18)]  # 0.05 to 0.90
@@ -81,6 +83,33 @@ def _apply_global_threshold(logits: torch.Tensor,
             above = above[:k_max]
         result.append({CATEGORY_LIST[j] for j, _ in above})
     return result
+
+
+def tune_topk(all_logits: torch.Tensor,
+              all_labels: torch.Tensor,
+              k_range: range = _TOPK_RANGE) -> int:
+    probs = torch.sigmoid(all_logits)
+    gold_cats = []
+    for i in range(all_labels.size(0)):
+        gold_cats.append({CATEGORY_LIST[j]
+                          for j in range(NUM_CATEGORIES)
+                          if all_labels[i, j] == 1})
+    best_k = 1
+    best_f1 = -1.0
+    for k in k_range:
+        pred_cats = apply_topk(all_logits, k)
+        m = category_f1(pred_cats, gold_cats)
+        if m["f1"] > best_f1:
+            best_f1 = m["f1"]
+            best_k = k
+    return best_k
+
+
+def apply_topk(logits: torch.Tensor, k: int) -> list[set[str]]:
+    probs = torch.sigmoid(logits)
+    topk_indices = probs.topk(min(k, probs.size(1)), dim=1).indices
+    return [{CATEGORY_LIST[j] for j in topk_indices[i].tolist()}
+            for i in range(probs.size(0))]
 
 
 class CategoryTrainer:

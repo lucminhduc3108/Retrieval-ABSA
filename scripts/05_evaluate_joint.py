@@ -12,7 +12,9 @@ from src.absa.category_dataset import CategoryDataset
 from src.absa.category_model import CategoryDetector
 from sklearn.model_selection import train_test_split
 from src.absa.category_trainer import (
-    _apply_global_threshold, _tune_global_threshold,
+    _apply_global_threshold, _apply_thresholds,
+    _tune_global_threshold, _tune_thresholds,
+    tune_topk, apply_topk,
 )
 from src.absa.sentiment_dataset import SentimentDataset
 from src.absa.sentiment_model import SentimentPredictor
@@ -35,8 +37,10 @@ logger = logging.getLogger(__name__)
 
 ID2POL = {v: k for k, v in POL2ID.items()}
 
+STRATEGIES = ["per_category", "global", "topk"]
 
-def predict_categories(model, dataset, threshold, device, batch_size=32):
+
+def collect_logits(model, dataset, device, batch_size=32):
     loader = DataLoader(dataset, batch_size=batch_size)
     all_logits = []
     model.eval()
@@ -46,8 +50,25 @@ def predict_categories(model, dataset, threshold, device, batch_size=32):
                      for k, v in batch.items()}
             out = model(batch["input_ids"], batch["attention_mask"])
             all_logits.append(out["logits"].cpu())
-    all_logits = torch.cat(all_logits, dim=0)
-    return _apply_global_threshold(all_logits, threshold)
+    return torch.cat(all_logits, dim=0)
+
+
+def decode_categories(logits, strategy, val_logits, val_labels):
+    if strategy == "per_category":
+        thresholds = _tune_thresholds(val_logits, val_labels)
+        pred_cats = _apply_thresholds(logits, thresholds)
+        info = f"per-cat thresholds: {[f'{t:.2f}' for t in thresholds]}"
+    elif strategy == "global":
+        threshold = _tune_global_threshold(val_logits, val_labels)
+        pred_cats = _apply_global_threshold(logits, threshold)
+        info = f"global threshold: {threshold:.2f}"
+    elif strategy == "topk":
+        k = tune_topk(val_logits, val_labels)
+        pred_cats = apply_topk(logits, k)
+        info = f"k={k}"
+    else:
+        raise ValueError(f"Unknown strategy: {strategy}")
+    return pred_cats, info
 
 
 def predict_sentiment(model, records, retriever, embedding_model,
@@ -100,6 +121,87 @@ def build_gold_pairs(cat_records, sent_records):
     return sentences, gold_cats_list, gold_pairs_list
 
 
+def run_joint_eval(pred_cats_list, test_cat, gold_cats_list, gold_pairs_list,
+                   s2_model, retriever, embedding_model, s2_cfg, ret_cfg,
+                   use_retrieval, device):
+    stage2_records = []
+    for cr, pred_cats in zip(test_cat, pred_cats_list):
+        for cat in sorted(pred_cats):
+            stage2_records.append({
+                "id": f"{cr['sentence_id']}_{cat}",
+                "sentence": cr["sentence"],
+                "category": cat,
+                "polarity": "positive",
+                "split": "test",
+            })
+
+    if stage2_records:
+        sent_preds = predict_sentiment(
+            s2_model, stage2_records, retriever, embedding_model,
+            tokenizer_name=s2_cfg["model_name"],
+            max_length=s2_cfg["max_seq_length"],
+            top_k=ret_cfg.get("top_k", 0) if use_retrieval else 0,
+            device=device, use_retrieval=use_retrieval,
+        )
+        for rec, pred_idx in zip(stage2_records, sent_preds):
+            rec["predicted_polarity"] = ID2POL[pred_idx]
+
+    pred_pairs_list = []
+    rec_idx = 0
+    for pred_cats in pred_cats_list:
+        pairs = set()
+        for cat in sorted(pred_cats):
+            if rec_idx < len(stage2_records):
+                pol = stage2_records[rec_idx].get("predicted_polarity", "positive")
+                pairs.add((cat, pol))
+                rec_idx += 1
+        pred_pairs_list.append(pairs)
+
+    cat_m = category_f1(pred_cats_list, gold_cats_list)
+    joint_m = joint_category_sentiment_f1(pred_pairs_list, gold_pairs_list)
+    sent_cond = sentiment_acc_given_correct_category(pred_pairs_list, gold_pairs_list)
+    per_cat = per_category_f1(pred_cats_list, gold_cats_list, CATEGORY_LIST)
+    return cat_m, joint_m, sent_cond, per_cat
+
+
+def format_report(cat_m, joint_m, sent_cond, per_cat, strategy=None):
+    report = []
+    header = "# Joint Evaluation Results"
+    if strategy:
+        header += f" ({strategy})"
+    report.append(header + "\n")
+    report.append("| Metric | Value |")
+    report.append("|--------|-------|")
+    report.append(f"| Category P | {cat_m['precision']:.4f} |")
+    report.append(f"| Category R | {cat_m['recall']:.4f} |")
+    report.append(f"| Category F1 | {cat_m['f1']:.4f} |")
+    report.append(f"| Joint P | {joint_m['precision']:.4f} |")
+    report.append(f"| Joint R | {joint_m['recall']:.4f} |")
+    report.append(f"| Joint F1 | {joint_m['f1']:.4f} |")
+    report.append(f"| Sent Acc|Correct Cat | {sent_cond['accuracy']:.4f} ({sent_cond['correct']}/{sent_cond['total']}) |")
+    report.append("")
+    report.append("## Per-Category F1\n")
+    report.append("| Category | P | R | F1 | Support |")
+    report.append("|----------|---|---|----|----|")
+    for cat in CATEGORY_LIST:
+        m = per_cat[cat]
+        report.append(f"| {cat} | {m['precision']:.3f} | {m['recall']:.3f} | {m['f1']:.3f} | {m['support']} |")
+    return "\n".join(report)
+
+
+def log_sigmoid_stats(logits, label, threshold_info=""):
+    probs = torch.sigmoid(logits)
+    logger.info("[%s] Sigmoid stats — mean=%.4f, std=%.4f, p50=%.4f, p90=%.4f, p95=%.4f %s",
+                label,
+                probs.mean().item(), probs.std().item(),
+                probs.quantile(0.5).item(), probs.quantile(0.9).item(),
+                probs.quantile(0.95).item(), threshold_info)
+    for j, cat in enumerate(CATEGORY_LIST):
+        col = probs[:, j]
+        logger.info("  %s: mean=%.4f, std=%.4f, max=%.4f",
+                     cat, col.mean().item(), col.std().item(), col.max().item())
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--stage1_ckpt", required=True)
@@ -110,6 +212,8 @@ def main():
     parser.add_argument("--index_dir", default="indexes/")
     parser.add_argument("--retrieval_config", default="configs/retrieval_v2.yaml")
     parser.add_argument("--no_retrieval", action="store_true")
+    parser.add_argument("--pred_strategy", default="all",
+                        choices=["all"] + STRATEGIES)
     args = parser.parse_args()
 
     s1_cfg = load_yaml(args.stage1_config)
@@ -120,6 +224,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info("Device: %s, retrieval: %s", device, use_retrieval)
 
+    # --- Load Stage 1 ---
     s1_ckpt = torch.load(args.stage1_ckpt, map_location=device)
     s1_model = CategoryDetector(
         model_name=s1_cfg["model_name"],
@@ -129,32 +234,34 @@ def main():
     ckpt_threshold = s1_ckpt.get("threshold")
     if ckpt_threshold is not None:
         logger.info("Checkpoint global threshold: %.2f", ckpt_threshold)
-    else:
-        logger.info("Old checkpoint (per-category thresholds), will re-tune globally")
 
+    # --- Reconstruct val split (must match training script) ---
     train_records = [r for r in read_jsonl(s1_cfg["category_path"])
                      if r["split"] == "train"]
+    stratify_key = [sum(r["category_vector"]) for r in train_records]
     _, val_records = train_test_split(
         train_records, test_size=s1_cfg["val_ratio"],
-        random_state=s1_cfg["seed"])
+        random_state=s1_cfg["seed"],
+        stratify=stratify_key)
     val_ds = CategoryDataset(val_records, tokenizer_name=s1_cfg["model_name"],
                              max_length=s1_cfg["max_seq_length"])
     val_loader = DataLoader(val_ds, batch_size=32)
-    val_logits, val_labels = [], []
-    s1_model.eval()
-    with torch.no_grad():
-        for batch in val_loader:
-            batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
-                     for k, v in batch.items()}
-            out = s1_model(batch["input_ids"], batch["attention_mask"])
-            val_logits.append(out["logits"].cpu())
-            val_labels.append(batch["category_labels"].cpu())
-    val_logits = torch.cat(val_logits, dim=0)
-    val_labels = torch.cat(val_labels, dim=0)
-    threshold = _tune_global_threshold(val_logits, val_labels)
-    logger.info("Re-tuned global threshold on %d val samples: %.2f",
-                len(val_records), threshold)
+    val_logits = collect_logits(s1_model, val_ds, device)
+    val_labels = torch.stack([torch.tensor(r["category_vector"], dtype=torch.float32)
+                              for r in val_records])
+    logger.info("Val set: %d samples", len(val_records))
 
+    # Consistency check: re-tuned threshold should match checkpoint
+    retune_threshold = _tune_global_threshold(val_logits, val_labels)
+    logger.info("Re-tuned global threshold: %.2f", retune_threshold)
+    if ckpt_threshold is not None and abs(retune_threshold - ckpt_threshold) > 0.05:
+        logger.warning(
+            "Re-tuned threshold (%.2f) differs from checkpoint (%.2f) — possible split mismatch",
+            retune_threshold, ckpt_threshold)
+
+    log_sigmoid_stats(val_logits, "val")
+
+    # --- Load Stage 2 + retrieval ---
     embedding_model = None
     retriever = None
     if use_retrieval:
@@ -185,6 +292,7 @@ def main():
     s2_model.load_state_dict(s2_state, strict=False)
     logger.info("Stage 2 loaded")
 
+    # --- Collect test data and logits ---
     cat_records = read_jsonl(s1_cfg["category_path"])
     test_cat = [r for r in cat_records if r["split"] == "test"]
     sent_records = read_jsonl(s2_cfg["sentiment_path"])
@@ -192,83 +300,64 @@ def main():
 
     cat_ds = CategoryDataset(test_cat, tokenizer_name=s1_cfg["model_name"],
                              max_length=s1_cfg["max_seq_length"])
-    pred_cats_list = predict_categories(
-        s1_model, cat_ds, threshold, device)
-    avg_preds = sum(len(s) for s in pred_cats_list) / max(len(pred_cats_list), 1)
-    logger.info("Avg predicted categories/sentence: %.2f (gold avg ~1.27)",
-                avg_preds)
-
-    stage2_records = []
-    for cr, pred_cats in zip(test_cat, pred_cats_list):
-        for cat in sorted(pred_cats):
-            stage2_records.append({
-                "id": f"{cr['sentence_id']}_{cat}",
-                "sentence": cr["sentence"],
-                "category": cat,
-                "polarity": "positive",
-                "split": "test",
-            })
-
-    if stage2_records:
-        sent_preds = predict_sentiment(
-            s2_model, stage2_records, retriever, embedding_model,
-            tokenizer_name=s2_cfg["model_name"],
-            max_length=s2_cfg["max_seq_length"],
-            top_k=ret_cfg.get("top_k", 0) if use_retrieval else 0,
-            device=device, use_retrieval=use_retrieval,
-        )
-        for rec, pred_idx in zip(stage2_records, sent_preds):
-            rec["predicted_polarity"] = ID2POL[pred_idx]
+    test_logits = collect_logits(s1_model, cat_ds, device)
+    log_sigmoid_stats(test_logits, "test")
 
     sentences, gold_cats_list, gold_pairs_list = build_gold_pairs(
         test_cat, test_sent)
 
-    pred_pairs_list = []
-    rec_idx = 0
-    for pred_cats in pred_cats_list:
-        pairs = set()
-        for cat in sorted(pred_cats):
-            if rec_idx < len(stage2_records):
-                pol = stage2_records[rec_idx].get("predicted_polarity", "positive")
-                pairs.add((cat, pol))
-                rec_idx += 1
-        pred_pairs_list.append(pairs)
+    # --- Run strategies ---
+    strategies = STRATEGIES if args.pred_strategy == "all" else [args.pred_strategy]
+    all_results = {}
+    all_reports = []
 
-    cat_m = category_f1(pred_cats_list, gold_cats_list)
-    joint_m = joint_category_sentiment_f1(pred_pairs_list, gold_pairs_list)
+    for strat in strategies:
+        logger.info("--- Strategy: %s ---", strat)
+        pred_cats, info = decode_categories(
+            test_logits, strat, val_logits, val_labels)
+        avg_preds = sum(len(s) for s in pred_cats) / max(len(pred_cats), 1)
+        logger.info("[%s] %s, avg predicted cats/sentence: %.2f", strat, info, avg_preds)
 
-    sent_cond = sentiment_acc_given_correct_category(
-        pred_pairs_list, gold_pairs_list)
+        cat_m, joint_m, sent_cond, per_cat = run_joint_eval(
+            pred_cats, test_cat, gold_cats_list, gold_pairs_list,
+            s2_model, retriever, embedding_model, s2_cfg, ret_cfg,
+            use_retrieval, device)
 
-    per_cat = per_category_f1(pred_cats_list, gold_cats_list, CATEGORY_LIST)
+        all_results[strat] = {
+            "cat_f1": cat_m["f1"], "cat_p": cat_m["precision"], "cat_r": cat_m["recall"],
+            "joint_f1": joint_m["f1"], "joint_p": joint_m["precision"], "joint_r": joint_m["recall"],
+            "sent_acc": sent_cond["accuracy"],
+            "sent_correct": sent_cond["correct"], "sent_total": sent_cond["total"],
+            "avg_preds": avg_preds, "info": info,
+        }
+        report = format_report(cat_m, joint_m, sent_cond, per_cat, strategy=strat)
+        all_reports.append(report)
+        logger.info("[%s] Cat F1=%.4f, Joint F1=%.4f, Sent Acc|CC=%.4f",
+                    strat, cat_m["f1"], joint_m["f1"], sent_cond["accuracy"])
 
-    report = []
-    report.append("# Joint Evaluation Results\n")
-    report.append(f"| Metric | Value |")
-    report.append(f"|--------|-------|")
-    report.append(f"| Category P | {cat_m['precision']:.4f} |")
-    report.append(f"| Category R | {cat_m['recall']:.4f} |")
-    report.append(f"| Category F1 | {cat_m['f1']:.4f} |")
-    report.append(f"| Joint P | {joint_m['precision']:.4f} |")
-    report.append(f"| Joint R | {joint_m['recall']:.4f} |")
-    report.append(f"| Joint F1 | {joint_m['f1']:.4f} |")
-    report.append(f"| Sent Acc|Correct Cat | {sent_cond['accuracy']:.4f} ({sent_cond['correct']}/{sent_cond['total']}) |")
-    report.append("")
-    report.append("## Per-Category F1\n")
-    report.append("| Category | P | R | F1 | Support |")
-    report.append("|----------|---|---|----|----|")
-    for cat in CATEGORY_LIST:
-        m = per_cat[cat]
-        report.append(f"| {cat} | {m['precision']:.3f} | {m['recall']:.3f} | {m['f1']:.3f} | {m['support']} |")
+    # --- Print comparison table if multiple strategies ---
+    if len(strategies) > 1:
+        comp = ["\n# Strategy Comparison\n"]
+        comp.append("| Strategy | Cat P | Cat R | Cat F1 | Joint F1 | Sent Acc|CC | Avg Preds | Config |")
+        comp.append("|----------|-------|-------|--------|----------|-----------|-----------|--------|")
+        for strat in strategies:
+            r = all_results[strat]
+            comp.append(f"| {strat} | {r['cat_p']:.4f} | {r['cat_r']:.4f} | {r['cat_f1']:.4f} "
+                        f"| {r['joint_f1']:.4f} | {r['sent_acc']:.4f} ({r['sent_correct']}/{r['sent_total']}) "
+                        f"| {r['avg_preds']:.2f} | {r['info']} |")
+        comp_text = "\n".join(comp)
+        print(comp_text)
+        all_reports.insert(0, comp_text)
 
-    report_text = "\n".join(report)
-    print(report_text)
+    for report in all_reports:
+        if not report.startswith("\n#"):
+            print("\n" + report)
 
     tag = "noret" if args.no_retrieval else "retrieval"
     out_path = f"logs/joint_eval_{tag}.md"
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
-        f.write(report_text)
+        f.write("\n\n".join(all_reports))
     logger.info("Results saved to %s", out_path)
 
 

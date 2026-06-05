@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from src.absa.category_trainer import (
     _tune_thresholds, _apply_thresholds,
     _tune_global_threshold, _apply_global_threshold,
+    tune_topk, apply_topk,
     CategoryTrainer,
 )
 from src.data.category_builder import NUM_CATEGORIES, CATEGORY_LIST
@@ -79,6 +80,34 @@ def test_apply_global_threshold_can_return_empty():
     logits = torch.full((2, NUM_CATEGORIES), -10.0)
     result = _apply_global_threshold(logits, 0.5)
     assert all(len(s) == 0 for s in result)
+
+
+def test_tune_topk_returns_int_in_range():
+    logits = torch.randn(50, NUM_CATEGORIES)
+    labels = torch.zeros(50, NUM_CATEGORIES)
+    for i in range(50):
+        labels[i, i % NUM_CATEGORIES] = 1.0
+    k = tune_topk(logits, labels)
+    assert isinstance(k, int)
+    assert 1 <= k <= 4
+
+
+def test_apply_topk_returns_exactly_k():
+    logits = torch.randn(10, NUM_CATEGORIES)
+    for k in [1, 2, 3]:
+        result = apply_topk(logits, k)
+        assert len(result) == 10
+        assert all(len(s) == k for s in result)
+
+
+def test_apply_topk_picks_highest_probs():
+    logits = torch.full((1, NUM_CATEGORIES), -10.0)
+    logits[0, 3] = 5.0
+    logits[0, 7] = 3.0
+    result = apply_topk(logits, 2)
+    assert CATEGORY_LIST[3] in result[0]
+    assert CATEGORY_LIST[7] in result[0]
+    assert len(result[0]) == 2
 
 
 def _make_loader(n=8, seq_len=16):
