@@ -144,7 +144,7 @@ def main():
                      for k, v in batch.items()}
             out = s1_model(batch["input_ids"], batch["attention_mask"])
             val_logits.append(out["logits"].cpu())
-            val_labels.append(batch["category_labels"])
+            val_labels.append(batch["category_labels"].cpu())
     val_logits = torch.cat(val_logits, dim=0)
     val_labels = torch.cat(val_labels, dim=0)
     thresholds = _tune_thresholds(val_logits, val_labels)
