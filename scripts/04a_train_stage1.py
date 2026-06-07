@@ -22,7 +22,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def compute_pos_weight(records: list[dict]) -> torch.Tensor:
+def compute_pos_weight(records: list[dict],
+                       cap: float | None = None) -> torch.Tensor:
     n = len(records)
     counts = [0] * NUM_CATEGORIES
     for r in records:
@@ -31,7 +32,10 @@ def compute_pos_weight(records: list[dict]) -> torch.Tensor:
     weights = []
     for c in counts:
         if c > 0:
-            weights.append(min(math.sqrt((n - c) / c), 5.0))
+            w = math.sqrt((n - c) / c)
+            if cap is not None:
+                w = min(w, cap)
+            weights.append(w)
         else:
             weights.append(1.0)
     return torch.tensor(weights, dtype=torch.float32)
@@ -63,8 +67,14 @@ def main():
     )
     logger.info("Train: %d, Val: %d", len(train_records), len(val_records))
 
-    pos_weight = compute_pos_weight(train_records).to(device)
-    logger.info("pos_weight: %s", [f"{w:.2f}" for w in pos_weight.tolist()])
+    pw_cap = cfg.get("pos_weight_cap", 5.0)
+    if pw_cap is None:
+        pos_weight = None
+        logger.info("pos_weight: disabled (no class balancing)")
+    else:
+        pos_weight = compute_pos_weight(train_records, cap=pw_cap).to(device)
+        logger.info("pos_weight (cap=%.1f): %s",
+                    pw_cap, [f"{w:.2f}" for w in pos_weight.tolist()])
 
     train_ds = CategoryDataset(train_records, tokenizer_name=cfg["model_name"],
                                max_length=cfg["max_seq_length"])

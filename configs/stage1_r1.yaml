@@ -1,0 +1,19 @@
+# Stage 1 Retrain R1: encoder_lr=1e-5, pos_weight cap=3.0
+model_name: microsoft/deberta-v3-base
+num_categories: 12
+batch_size: 64
+epochs: 20
+encoder_lr: 1.0e-5
+head_lr: 2.0e-4
+weight_decay: 0.01
+warmup_ratio: 0.1
+max_seq_length: 128
+grad_clip: 1.0
+patience: 5
+seed: 42
+val_ratio: 0.2
+ckpt_dir: checkpoints/stage1_r1
+log_path: logs/stage1_r1_training.jsonl
+category_path: data/processed/category_detection.jsonl
+grad_accum_steps: 1
+pos_weight_cap: 3.0
