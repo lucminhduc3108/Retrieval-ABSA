@@ -89,11 +89,11 @@ def main():
         pos_weight=pos_weight,
     ).to(device)
 
-    encoder_lr = cfg.get("encoder_lr", 2e-5)
-    head_lr = cfg.get("head_lr", 2e-4)
+    encoder_lr = float(cfg.get("encoder_lr", 2e-5))
+    head_lr = float(cfg.get("head_lr", 1e-4))
     param_groups = [
         {"params": list(model.encoder.parameters()), "lr": encoder_lr},
-        {"params": list(model.category_head.parameters()), "lr": head_lr},
+        {"params": list(model.category_head.parameters()) + list(model.pooler.parameters()), "lr": head_lr},
     ]
     optimizer = torch.optim.AdamW(param_groups, weight_decay=cfg["weight_decay"])
 
@@ -103,11 +103,13 @@ def main():
     warmup_steps = int(total_steps * cfg["warmup_ratio"])
     scheduler = get_linear_schedule_with_warmup(optimizer, warmup_steps, total_steps)
 
+    use_fp16 = cfg.get("use_fp16", device == "cuda")
+
     trainer = CategoryTrainer(
         model=model, optimizer=optimizer, scheduler=scheduler,
         device=device, patience=cfg["patience"],
         grad_clip=cfg["grad_clip"], log_path=cfg["log_path"],
-        use_fp16=device == "cuda",
+        use_fp16=use_fp16,
         grad_accum_steps=grad_accum,
     )
 
