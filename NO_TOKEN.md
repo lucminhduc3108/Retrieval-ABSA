@@ -254,8 +254,8 @@ Nếu cả 3 experiments đều fail (Cat F1 < 0.50):
 - [x] Chạy tests (đảm bảo không break existing tests)
 - [x] Upload lên Kaggle, chạy NB1 Session 1
 - [x] Đọc kết quả, chọn best model (R4)
-- [ ] Chạy NB3 Session 2 với best checkpoint
-- [ ] Cập nhật STATUS.md với kết quả mới
+- [x] Chạy NB3 Session 2 với best checkpoint
+- [x] Cập nhật STATUS.md với kết quả mới
 
 ---
 

@@ -1,6 +1,6 @@
 # Project Status — Retrieval-ABSA
 
-**Last updated:** 2026-06-01 (pipeline redesign discussion)
+**Last updated:** 2026-06-05 (NB3 run 2 done — Stage 1 model fail, Cat F1=0.23 on test, needs retrain)
 
 ---
 
@@ -179,38 +179,124 @@ Sessions use plain CE (no CRF). Full pipeline split into nb1–nb4 to avoid T4 O
 
 ---
 
-## Kaggle Notebook Status
+## Phase 5 Kaggle Notebooks
+
+| Notebook | Kaggle URL | Status | Output dataset |
+|----------|-----------|--------|----------------|
+| **P5-NB1: Stage 1 Train** | [lcminhc/p5-nb1-stage1-train](https://www.kaggle.com/code/lcminhc/p5-nb1-stage1-train) | ✅ Done | `p5-nb1-stage1` |
+| **P5-NB2: Stage 2 Train** | [lcminhc/p5-nb2-stage2-train](https://www.kaggle.com/code/lcminhc/p5-nb2-stage2-train) | ✅ Run 2 done (ret), pending no-ret | `p5-nb2-stage2` |
+| **P5-NB3: Joint Eval** | [lcminhc/p5-nb3-joint-eval](https://www.kaggle.com/code/lcminhc/p5-nb3-joint-eval) | ✅ Run 2 done — Stage 1 FAIL | metrics report |
+
+**Stage 1 results (2026-06-04):** Cat F1=0.8991 (val only, P=1.0, R=0.82), best epoch 1, early stop epoch 6. Fix: encoder_lr 2e-5→2e-6 (commit `8b26e92`).
+**Batch sizes:** Stage 1 batch=64, Stage 2 batch=32, grad_accum=2
+
+### NB3 Run 1 — FAILED (2026-06-05, old code)
+
+Bugs: (1) eval val split missing `stratify` → threshold tuned on training data, (2) Sent Acc|CC metric was global not per-sentence. Fixed in commits `9a5d112`, `f140e40`, `0afdcd1`, `e997645`.
+
+### NB3 Run 2 — Stage 1 FAIL (2026-06-05)
+
+**Fixes applied:** stratify match, 3 prediction strategies (per_category/global/topk), diagnostic logging.
+
+**Strategy Comparison (test set, 859 opinions — identical for ret/no-ret since Stage 1 shared):**
+
+| Strategy | Cat P | Cat R | Cat F1 | Avg Preds | Config |
+|----------|-------|-------|--------|-----------|--------|
+| per_category | 0.1375 | 0.9152 | 0.2391 | 8.42 | per-cat thresholds |
+| global | 0.1478 | 0.4670 | 0.2246 | 4.00 | threshold=0.45 |
+| topk | 0.1516 | 0.4791 | 0.2303 | 4.00 | k=4 |
+
+**Joint F1 (retrieval vs no-retrieval):**
+
+| Strategy | Ret Joint F1 | No-Ret Joint F1 | Ret Sent Acc\|CC | No-Ret Sent Acc\|CC |
+|----------|-------------|-----------------|----------------|------------------|
+| per_category | 0.2079 | **0.2121** | 0.8706 | **0.8882** |
+| global | 0.2008 | **0.2014** | 0.8963 | **0.8991** |
+| topk | 0.2078 | **0.2085** | 0.9045 | **0.9073** |
+
+**Root cause — Stage 1 model cannot generalize:**
+1. **pos_weight quá cao cho rare categories** (cap=5.0) — BCE loss phạt false negative nặng gấp 5x → model học bias cao cho mọi category → fire mọi câu
+2. **encoder_lr=2e-6 quá thấp** — DeBERTa gần frozen, [CLS] features không adapt cho 12-way classification
+3. **Chỉ 1 epoch hiệu quả** (best epoch 1, early stop epoch 6) — Linear(768,12) chỉ kịp học bias, chưa học discriminative weights
+4. **Val Cat F1=0.8991 misleading** — val nhỏ (~342 samples), threshold tuned trên chính val → optimistic, gap val→test = 66pp
+
+**Stage 2 OK:** Sent Acc|CC = 0.87-0.91 khi category đúng. No-retrieval slightly better.
+
+**Kết luận:** Cần retrain Stage 1 trước khi so sánh retrieval vs no-retrieval có ý nghĩa.
+
+### NB3 Run 3 — Stage 1 R4 + Stage 2 Run 2 (2026-06-08)
+
+**Test Set Results (859 opinions):**
+
+| Strategy | Ret Cat F1 | Ret Joint F1 | Ret Sent Acc\|CC | No-Ret Cat F1 | No-Ret Joint F1 | No-Ret Sent Acc\|CC |
+|----------|------------|--------------|----------------|---------------|-----------------|-------------------|
+| per_category | 0.6765 | 0.5977 | 0.8880 | 0.6765 | 0.6028 | 0.8956 |
+| global (0.6) | **0.6844** | 0.6067 | 0.8913 | **0.6844** | **0.6120** | 0.8990 |
+| topk (k=1) | 0.6602 | 0.5889 | 0.8975 | 0.6602 | 0.5979 | **0.9112** |
+
+**Key findings:**
+1. **Stage 1 R4 is a huge success:** Category F1 reached **0.6844** on the hidden test set (up from the disastrous 0.23 in Run 2). The model successfully learned to predict categories without overfitting.
+2. **No-Retrieval strictly beats Retrieval** across all metrics and all strategies (Joint F1 +0.53pp, Sent Acc +0.77pp on global strategy).
+3. **Gap narrowed significantly:** In Phase 2, No-Ret beat Ret by 6.4pp. Now the gap is only ~0.5pp. This indicates label interpolation with retrieval embeddings is much less noisy but still slightly lags behind direct sequence classification.
+4. **Best configuration:** Global Strategy (threshold=0.60) + No-Retrieval yields Joint F1 = **0.6120**. This establishes the new robust baseline for Phase 5.
+
+
+### NB2 Run 1 Results (Val metrics, 10 epochs each)
+
+| Metric | Retrieval (ep10) | No-Ret (ep7 best) | Gap |
+|--------|------------------|--------------------|-----|
+| Sent Acc | 0.8589 | **0.8795** | -2.1pp |
+| Macro F1 | 0.5727 | **0.5940** | -2.1pp |
+
+**Problems identified:**
+- Retrieval **chưa converge** ở epoch 10 (Acc/F1 vẫn đang tăng, patience 0/5)
+- Macro F1 thấp (~0.57-0.59) dù Acc ~0.88 — **neutral class (4%) bị ignore**
+- Early stopping theo Acc (misleading với 66% positive majority)
+- tau=0.05 quá sharp → label interpolation gần one-hot, khuếch đại wrong-polarity noise
+
+### NB2 Run 2 Fixes (commit `5397f32`)
+
+| Fix | Change | Config |
+|-----|--------|--------|
+| P1: Early stop Macro F1 | `sentiment_trainer.py`: best model selected by `sentiment_macro_f1` | — |
+| P2: Sqrt class weights | `sentiment_model.py` + `04b_train_stage2.py`: weights [1.00, 1.485, 3.910] | — |
+| P3: Softer tau | `stage2.yaml`: tau 0.05 → **0.5** | retrieval only |
+| P4: More epochs | `stage2.yaml`: epochs 10 → **20**, patience 5 → **7** | retrieval only |
+
+### NB2 Run 2 Results — Retrieval (Val metrics, 20 epochs)
+
+| Metric | Run 1 Ret (ep10) | **Run 2 Ret (ep20)** | Run 1 No-Ret (ep7) | Run 2 vs Run 1 Ret | Run 2 vs No-Ret |
+|--------|-------------------|----------------------|---------------------|--------------------|-----------------|
+| Sent Acc | 0.8589 | **0.8980** | 0.8795 | **+3.9pp** | **+1.9pp** |
+| Macro F1 | 0.5727 | **0.5973** | 0.5940 | **+2.5pp** | **+0.3pp** |
+
+**Key findings:**
+- **Retrieval lần đầu beat no-retrieval trên val** — Macro F1 0.5973 > 0.5940 (+0.3pp), Acc 0.8980 > 0.8795 (+1.9pp)
+- **4 fixes đều có tác dụng:** +2.5pp Macro F1, +3.9pp Acc vs run 1
+- **Chưa converge hoàn toàn:** best ở epoch 20 (cuối), patience chưa trigger. Gains nhỏ dần (ep13→ep20: +0.5pp Macro F1)
+- **Vẫn thiếu no-ret run 2** (với P1+P2 fixes) để so sánh fair
+
+---
+
+## Phase 1–4 Kaggle Notebooks (archived)
 
 | Notebook | Kaggle URL | Status |
 |----------|-----------|--------|
-| P3-S1: CRF no-retrieval | [lcminhc/gd3-session1-crf-no-retrieval](https://www.kaggle.com/code/lcminhc/gd3-session1-crf-no-retrieval) | Done — CRF unnorm, sentiment collapsed |
-| P3-S1A: CRF normalized | local `gd3-session1a-crf-normalized.ipynb` | Done — CRF norm, span regressed |
-| P3-S2-NB1: Embedding | [lcminhc/p3s2-embedding dataset](https://www.kaggle.com/datasets/lcminhc/p3s2-embedding) | Done — tau=0.12, recall@3=0.136 |
-| P3-S2-NB2: Index | [lcminhc/p3s2-index dataset](https://www.kaggle.com/datasets/lcminhc/p3s2-index) | Done — 4,161 vectors |
-| P3-S2-NB3: ABSA Train | [lcminhc/p3s2-nb3-absa-train](https://www.kaggle.com/code/lcminhc/p3s2-nb3-absa-train) | Done — best epoch 8, val joint_f1=0.646 |
-| P3-S2-NB4: Evaluate | [lcminhc/p3s2-nb4-eval](https://www.kaggle.com/code/lcminhc/p3s2-nb4-eval) | Done — S2: Joint F1=0.5725, **S3: Joint F1=0.6237** |
-| **P4-Sprint01: Retrieval Quality** | [lcminhc/sprint01-retrieval-quality](https://www.kaggle.com/code/lcminhc/sprint01-retrieval-quality) | Done — results in `retrieval_quality.md` |
-| **P4-Sprint02: ABSA Hardening** | [lcminhc/sprint-2-absa-train-e1-e2](https://www.kaggle.com/code/lcminhc/sprint-2-absa-train-e1-e2) | **Done — FAIL (E1 overfit, E2 worse)** |
-| **P4-Sprint02: Eval E1** | [lcminhc/sprint-02-eval-e1](https://www.kaggle.com/code/lcminhc/sprint-02-eval-e1) | **Done — Joint F1=0.5684 (thua S3)** |
+| P3-S1: CRF no-retrieval | [lcminhc/gd3-session1-crf-no-retrieval](https://www.kaggle.com/code/lcminhc/gd3-session1-crf-no-retrieval) | Done — CRF dropped |
+| P3-S2-NB3: ABSA Train | [lcminhc/p3s2-nb3-absa-train](https://www.kaggle.com/code/lcminhc/p3s2-nb3-absa-train) | Done — Joint F1=0.6237 |
+| P3-S2-NB4: Evaluate | [lcminhc/p3s2-nb4-eval](https://www.kaggle.com/code/lcminhc/p3s2-nb4-eval) | Done — S3 Joint F1=0.6237 |
+| P4-Sprint01 | [lcminhc/sprint01-retrieval-quality](https://www.kaggle.com/code/lcminhc/sprint01-retrieval-quality) | Done |
+| P4-Sprint02 | [lcminhc/sprint-2-absa-train-e1-e2](https://www.kaggle.com/code/lcminhc/sprint-2-absa-train-e1-e2) | Done — FAIL |
+
+Old notebooks + push dirs moved to `archive/kaggle_old/`.
 
 ---
 
 ## Training Environment
 
-- **GPU:** Kaggle T4 (free tier)
+- **GPU:** Kaggle T4x2 (2×16GB VRAM, pipeline uses 1 GPU)
 - **Local:** Windows 11, no GPU training
-- **Checkpoints stored:** Kaggle datasets (`lcminhc/p3s2-embedding`, `lcminhc/p3s2-index`, `lcminhc/p3s2-absa-ckpt`, `lcminhc/p3s2-embedding-flat`)
-
----
-
-## Vấn đề tồn đọng (sau S3, trước Sprint 2 results)
-
-1. **BIO Token F1 gap**: 0.5505 vs 0.6198 (P2 no-ret) = -6.9pp. Split BIO đã giúp Span F1 (+3.3pp) nhưng Token F1 vẫn thấp do boundary confusion (B/I).
-2. **Sentiment MacF1 gap**: 0.7991 vs 0.8234 = -2.4pp. **Root cause xác định:** S3 thiếu class weights (config mismatch). Sprint 2 E1 đang test fix này.
-3. **Retrieval polarity noise**: Embedding gần mù polarity (61.6% match, neutral 8.6%). Sprint 2 E2 test retrieval dropout để chống noise.
-4. **Overfitting**: Val loss diverges từ epoch 5. Retrieval dropout (E2) có thể cải thiện regularization.
-
-**Full report:** `report_gd3_s3.md`
+- **Checkpoints stored:** Kaggle datasets (`lcminhc/p3s2-embedding-flat` for Phase 3 assets)
 
 ---
 
@@ -353,7 +439,7 @@ Gop `p3s2-embedding` + `p3s2-index` vao 1 dataset flat:
 
 **Full design:** `REDESIGN_DISCUSSION.md`
 
-**Status:** Phase 1 code complete ✅ — chờ train trên Kaggle
+**Status:** NB1 done, NB2 run 2 ret done, NB3 run 2 done — **Stage 1 model fail (Cat F1=0.23), needs retrain**
 
 ### Code Changes (2026-06-03)
 
@@ -375,8 +461,14 @@ Gop `p3s2-embedding` + `p3s2-index` vao 1 dataset flat:
 - `src/retrieval/retriever.py` — thêm exclude_sentence parameter (C1 fix)
 - `tests/test_retriever.py` — thêm test exclude_sentence
 
-**Tests:** 143/143 pass (90 old + 53 new)
+**Tests:** 146/146 pass (143 Phase 5 + 2 new: class weights + early stop metric + 1 per-sentence metric)
 **Smoke tests:** Stage 1 CPU ✅, Stage 2 no-retrieval CPU ✅
+
+### Kaggle Datasets (Phase 5)
+
+| Dataset | URL | Contents |
+|---------|-----|----------|
+| `p5-nb1-stage1` | [lcminhc/p5-nb1-stage1](https://www.kaggle.com/datasets/lcminhc/p5-nb1-stage1) | `stage1_best.pt`, `category_detection.jsonl`, `sentiment_records.jsonl`, logs |
 
 ### Next Actions
 
@@ -385,5 +477,37 @@ Gop `p3s2-embedding` + `p3s2-index` vao 1 dataset flat:
 - [x] Rewrite model (category head 12 sigmoid + conditioned sentiment head + label interpolation)
 - [x] Rewrite metrics (category P/R/F1, new Joint F1, Sentiment Acc|Correct Category)
 - [x] Rewrite trainer (Stage 1 train → Stage 2 train separately)
-- [ ] Train Phase 1 trên Kaggle (retrieval variant + no-retrieval baseline)
-- [ ] Evaluate + so sánh retrieval vs no-retrieval
+- [x] Train Stage 1 trên Kaggle — **Done** (Cat F1=0.8991, encoder_lr fix 2e-5→2e-6)
+- [x] Train Stage 2 run 1 — **Done** (retrieval not converged, Macro F1 low)
+- [x] Phân tích + implement 4 fixes — **Done** (commit `5397f32`)
+- [x] Train Stage 2 run 2 trên Kaggle (retrieval) — **Done** (Macro F1=0.5973, best ep20, beat no-ret run 1)
+- [x] NB3 run 1 — **FAILED** (threshold overfitting + metric bug)
+- [x] Fix: stratify match, 3 strategies, diagnostic logging (commits `9a5d112`→`e997645`)
+- [x] NB3 run 2 — **Stage 1 FAIL** (Cat F1=0.23, model can't distinguish categories on test)
+- [ ] **Retrain Stage 1** — fix pos_weight cap, tăng encoder_lr, train đủ epochs
+- [ ] Neutral augmentation từ MAMS dataset — **Plan ready, chờ nghiên cứu thêm**
+
+---
+
+## Neutral Augmentation Plan (Pending)
+
+**Vấn đề:** Neutral chỉ 101/2,507 samples (4%) → model ignore neutral (Acc=0.88, Macro F1=0.59)
+
+**Approach:** Lấy neutral sentences từ MAMS-ACSA dataset, LLM map sang 12 SemEval categories.
+
+**MAMS dataset:** https://github.com/siat-nlp/MAMS-for-ABSA
+- Paper: EMNLP-IJCNLP 2019, restaurant domain, mỗi câu ≥2 aspects với polarity khác nhau
+- Neutral available: ~190 (train) + ~468 (val) = **~658 neutral opinions**
+- 8 coarse categories (food, service, ambience...) → cần map sang 12 SemEval fine-grained
+
+**Category mapping:**
+- 5/8 map trực tiếp (High/Medium confidence): service→SERVICE#GENERAL, ambience→AMBIENCE#GENERAL, miscellaneous→RESTAURANT#MISCELLANEOUS, staff→SERVICE#GENERAL, place→RESTAURANT#GENERAL
+- 3/8 cần LLM annotate (food→FOOD#QUALITY/PRICES/STYLE_OPTIONS, price→*#PRICES, menu→?)
+
+**Target:** 15-20% neutral (thêm ~240-425 samples)
+
+**Quy trình:** Extract MAMS → LLM annotate categories → Human spot-check → Merge vào sentiment_records.jsonl → Retrain Stage 2
+
+**Nguồn bổ sung đã khảo sát:** QUAD dataset (~96 neutral, cùng 12 categories nhưng overlap SemEval), back-translation, LLM-generated, oversampling
+
+**Full plan:** `.claude/plans/context-after-nb2-training-curried-volcano.md`
