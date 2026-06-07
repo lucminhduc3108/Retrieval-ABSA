@@ -10,6 +10,13 @@ class CategoryDetector(nn.Module):
         super().__init__()
         self.encoder = AutoModel.from_pretrained(model_name, dtype=torch.float32)
         hidden = self.encoder.config.hidden_size
+        
+        # ContextPooler to add regularization and complexity
+        self.pooler = nn.Sequential(
+            nn.Linear(hidden, hidden),
+            nn.Tanh(),
+            nn.Dropout(0.2)
+        )
         self.category_head = nn.Linear(hidden, num_categories)
         self.loss_fn = nn.BCEWithLogitsLoss(
             pos_weight=pos_weight if pos_weight is not None else None)
@@ -18,7 +25,8 @@ class CategoryDetector(nn.Module):
                 category_labels=None) -> dict:
         outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
         cls_output = outputs.last_hidden_state[:, 0]
-        logits = self.category_head(cls_output)
+        pooled_output = self.pooler(cls_output)
+        logits = self.category_head(pooled_output)
 
         loss = None
         if category_labels is not None:

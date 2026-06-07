@@ -226,18 +226,19 @@ class CategoryTrainer:
         all_logits = torch.cat(all_logits, dim=0)
         all_labels = torch.cat(all_labels, dim=0)
 
-        threshold = _tune_global_threshold(all_logits, all_labels)
-        pred_cats = _apply_global_threshold(all_logits, threshold)
+        thresholds = _tune_thresholds(all_logits, all_labels)
+        pred_cats = _apply_thresholds(all_logits, thresholds)
         gold_cats = _apply_thresholds(
             all_labels * 100, [0.5] * NUM_CATEGORIES)
 
         cat_m = category_f1(pred_cats, gold_cats)
+        avg_threshold = sum(thresholds) / len(thresholds)
 
         return {
             "loss": total_loss / max(num_batches, 1),
             "category_f1": cat_m["f1"],
             "category_precision": cat_m["precision"],
             "category_recall": cat_m["recall"],
-            "threshold": threshold,
-            "thresholds": [threshold] * NUM_CATEGORIES,
+            "threshold": avg_threshold,
+            "thresholds": thresholds,
         }
