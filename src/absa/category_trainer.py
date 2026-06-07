@@ -228,8 +228,11 @@ class CategoryTrainer:
 
         thresholds = _tune_thresholds(all_logits, all_labels)
         pred_cats = _apply_thresholds(all_logits, thresholds)
-        gold_cats = _apply_thresholds(
-            all_labels * 100, [0.5] * NUM_CATEGORIES)
+        
+        gold_cats = []
+        for i in range(all_labels.size(0)):
+            cats = {CATEGORY_LIST[j] for j in range(NUM_CATEGORIES) if all_labels[i, j] == 1}
+            gold_cats.append(cats)
 
         cat_m = category_f1(pred_cats, gold_cats)
         avg_threshold = sum(thresholds) / len(thresholds)
