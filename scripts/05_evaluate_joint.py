@@ -229,6 +229,8 @@ def main():
     s1_model = CategoryDetector(
         model_name=s1_cfg["model_name"],
         num_categories=s1_cfg["num_categories"],
+        use_asl=s1_cfg.get("use_asl", False),
+        use_cat_attention=s1_cfg.get("use_cat_attention", False),
     ).to(device)
     s1_model.load_state_dict(s1_ckpt["model_state"], strict=False)
     ckpt_threshold = s1_ckpt.get("threshold")
