@@ -80,18 +80,17 @@ def main():
         logger.info("Train: %d, Val: %d", len(train_records), len(val_records))
 
     use_asl = cfg.get("use_asl", False)
-    if use_asl:
+    pw_cap = cfg.get("pos_weight_cap", 5.0)
+    if pw_cap is None:
         pos_weight = None
-        logger.info("ASL enabled — pos_weight disabled")
+        logger.info("pos_weight: disabled")
     else:
-        pw_cap = cfg.get("pos_weight_cap", 5.0)
-        if pw_cap is None:
-            pos_weight = None
-            logger.info("pos_weight: disabled (no class balancing)")
-        else:
-            pos_weight = compute_pos_weight(train_records, cap=pw_cap).to(device)
-            logger.info("pos_weight (cap=%.1f): %s",
-                        pw_cap, [f"{w:.2f}" for w in pos_weight.tolist()])
+        pos_weight = compute_pos_weight(train_records, cap=pw_cap).to(device)
+        logger.info("pos_weight (cap=%.1f): %s",
+                    pw_cap, [f"{w:.2f}" for w in pos_weight.tolist()])
+    if use_asl:
+        logger.info("ASL enabled (gamma_neg=%s, margin=%s) — pos_weight applied inside ASL",
+                    cfg.get("asl_gamma_neg", 4), cfg.get("asl_margin", 0.05))
 
     train_ds = CategoryDataset(train_records, tokenizer_name=cfg["model_name"],
                                max_length=cfg["max_seq_length"])

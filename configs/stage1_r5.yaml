@@ -19,9 +19,9 @@ warmup_ratio: 0.1
 use_fp16: false
 val_ratio: 0.2
 seed: 42
-pos_weight_cap: null
+pos_weight_cap: 3.0
 
 use_asl: true
-asl_gamma_neg: 4
+asl_gamma_neg: 2
 asl_gamma_pos: 0
 asl_margin: 0.05

@@ -4,11 +4,13 @@ from transformers import AutoModel
 
 
 class AsymmetricLoss(nn.Module):
-    def __init__(self, gamma_neg=4, gamma_pos=0, margin=0.05):
+    def __init__(self, gamma_neg=4, gamma_pos=0, margin=0.05,
+                 pos_weight: torch.Tensor | None = None):
         super().__init__()
         self.gamma_neg = gamma_neg
         self.gamma_pos = gamma_pos
         self.margin = margin
+        self.register_buffer('pos_weight', pos_weight)
 
     def forward(self, logits, targets):
         xs_pos = torch.sigmoid(logits)
@@ -17,6 +19,8 @@ class AsymmetricLoss(nn.Module):
             xs_neg = (xs_neg + self.margin).clamp(max=1)
         los_pos = targets * torch.log(xs_pos.clamp(min=1e-8))
         los_neg = (1 - targets) * torch.log(xs_neg.clamp(min=1e-8))
+        if self.pos_weight is not None:
+            los_pos = los_pos * self.pos_weight
         loss = los_pos + los_neg
         if self.gamma_neg > 0 or self.gamma_pos > 0:
             pt0 = xs_neg * (1 - targets)
@@ -58,7 +62,8 @@ class CategoryDetector(nn.Module):
         if use_asl:
             self.loss_fn = AsymmetricLoss(gamma_neg=asl_gamma_neg,
                                           gamma_pos=asl_gamma_pos,
-                                          margin=asl_margin)
+                                          margin=asl_margin,
+                                          pos_weight=pos_weight)
         else:
             self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
