@@ -1,6 +1,6 @@
 # Project Status — Retrieval-ABSA
 
-**Last updated:** 2026-06-05 (NB3 run 2 done — Stage 1 model fail, Cat F1=0.23 on test, needs retrain)
+**Last updated:** 2026-06-08 (Stage 1 improvement in progress — ASL dropped (2 attempts), Cat-Aware v2 running on Kaggle NB1 v6 (30 epochs, ep3/30))
 
 ---
 
@@ -124,7 +124,7 @@ Config: `embedding_v3.yaml` (hard negatives, tau=0.12, batch=128) + `retrieval_v
 - [x] 3B-2: Hard negative mining — DONE (S3, embedding_v3, batch=128)
 - [x] 3C: Split BIO head — DONE (S3, two-pass forward, Joint F1=0.6237)
 
-**Phase 4 (measure & minor fix) — IN PROGRESS 🔄**
+**Phase 4 (measure & minor fix) — DONE ✅**
 - [x] Sprint 1: Retrieval quality analysis — DONE (results in `retrieval_quality.md`)
 - [x] Sprint 2: ABSA hardening — **DONE — FAIL**
   - E1: S3 + cls_class_weights [1.00, 1.70, 4.33] — val joint=0.6349 nhưng **test joint=0.5684** (thua S3 -5.5pp, overfit)
@@ -183,12 +183,12 @@ Sessions use plain CE (no CRF). Full pipeline split into nb1–nb4 to avoid T4 O
 
 | Notebook | Kaggle URL | Status | Output dataset |
 |----------|-----------|--------|----------------|
-| **P5-NB1: Stage 1 Train** | [lcminhc/p5-nb1-stage1-train](https://www.kaggle.com/code/lcminhc/p5-nb1-stage1-train) | ✅ Done | `p5-nb1-stage1` |
+| **P5-NB1: Stage 1 Train** | [lcminhc/p5-nb1-stage1-train](https://www.kaggle.com/code/lcminhc/p5-nb1-stage1-train) | 🔄 v6 running (Cat-Aware 30ep) | `p5-nb1-stage1` |
 | **P5-NB2: Stage 2 Train** | [lcminhc/p5-nb2-stage2-train](https://www.kaggle.com/code/lcminhc/p5-nb2-stage2-train) | ✅ Run 2 done (ret), pending no-ret | `p5-nb2-stage2` |
-| **P5-NB3: Joint Eval** | [lcminhc/p5-nb3-joint-eval](https://www.kaggle.com/code/lcminhc/p5-nb3-joint-eval) | ✅ Run 2 done — Stage 1 FAIL | metrics report |
+| **P5-NB3: Joint Eval** | [lcminhc/p5-nb3-joint-eval](https://www.kaggle.com/code/lcminhc/p5-nb3-joint-eval) | ⏳ Pending NB1 v6 output | metrics report |
 
-**Stage 1 results (2026-06-04):** Cat F1=0.8991 (val only, P=1.0, R=0.82), best epoch 1, early stop epoch 6. Fix: encoder_lr 2e-5→2e-6 (commit `8b26e92`).
-**Batch sizes:** Stage 1 batch=64, Stage 2 batch=32, grad_accum=2
+**Stage 1 R4 (2026-06-08):** Val Cat F1=0.7482 (ep16), Test Cat F1=0.6844 (global). Config: `stage1_r4.yaml` (encoder_lr=2e-5, head_lr=1e-4, ContextPooler, pos_weight_cap=3.0, seq_len=256, fp16=false).
+**Batch sizes:** Stage 1 batch=16, Stage 2 batch=32, grad_accum=2
 
 ### NB3 Run 1 — FAILED (2026-06-05, old code)
 
@@ -405,6 +405,18 @@ Gop `p3s2-embedding` + `p3s2-index` vao 1 dataset flat:
 
 ## Phase 5: Pipeline Redesign — BIO → Category + Sentiment (IN PROGRESS 🔄)
 
+### Current Best Results (Phase 5, Test Set)
+
+| Strategy | Cat F1 | No-Ret Joint F1 | No-Ret Sent Acc\|CC | Ret Joint F1 | Ret Sent Acc\|CC |
+|----------|--------|-----------------|---------------------|-------------|-----------------|
+| per_category | 0.6765 | 0.6028 | 0.8956 | 0.5977 | 0.8880 |
+| **global (0.6)** | **0.6844** | **0.6120** | 0.8990 | 0.6067 | 0.8913 |
+| topk (k=1) | 0.6602 | 0.5979 | **0.9112** | 0.5889 | 0.8975 |
+
+**Best config:** Global strategy + No-Retrieval → **Joint F1 = 0.6120**
+**Phase 1 (Combo 6) = COMPLETE.** No-retrieval beats retrieval by ~0.5pp (down from 6.4pp in Phase 2).
+
+
 **Started:** 2026-06-01
 **Decision:** 2026-06-02 — **Combo 6→5** (Two-stage, phased retriever upgrade)
 **Design refined:** 2026-06-02 — architecture + loss details chốt sau review
@@ -439,7 +451,7 @@ Gop `p3s2-embedding` + `p3s2-index` vao 1 dataset flat:
 
 **Full design:** `REDESIGN_DISCUSSION.md`
 
-**Status:** NB1 done, NB2 run 2 ret done, NB3 run 2 done — **Stage 1 model fail (Cat F1=0.23), needs retrain**
+**Status:** Phase 1 COMPLETE — NB1 R4 done (Cat F1=0.6844), NB2 run 2 ret done, NB3 run 3 done (Joint F1=0.6120 no-ret). Stage 1 improvement in progress (NB1 v6 running).
 
 ### Code Changes (2026-06-03)
 
@@ -484,8 +496,86 @@ Gop `p3s2-embedding` + `p3s2-index` vao 1 dataset flat:
 - [x] NB3 run 1 — **FAILED** (threshold overfitting + metric bug)
 - [x] Fix: stratify match, 3 strategies, diagnostic logging (commits `9a5d112`→`e997645`)
 - [x] NB3 run 2 — **Stage 1 FAIL** (Cat F1=0.23, model can't distinguish categories on test)
-- [ ] **Retrain Stage 1** — fix pos_weight cap, tăng encoder_lr, train đủ epochs
-- [ ] Neutral augmentation từ MAMS dataset — **Plan ready, chờ nghiên cứu thêm**
+- [x] **Retrain Stage 1 (R4)** — ContextPooler, encoder_lr=2e-5, pos_weight_cap=3.0, fp16=false → **Cat F1=0.6844** (commits `86e62aa`→`11dca18`)
+- [x] NB3 run 3 — **SUCCESS** (Joint F1=0.6120 no-ret, Cat F1=0.6844)
+- [x] **Stage 1 improvement Phase A** — ASL dropped (2 attempts fail), Cat-Aware Attention v2 running (30 epochs). Full plan: `stage1_improvement.md`
+- [ ] **Chạy NB3** với Cat-Aware checkpoint sau khi NB1 v6 xong → so sánh test Cat F1 vs R4 (0.6844)
+- [ ] **Quyết định Phase B** (Hierarchical) dựa trên test Cat F1 của Cat-Aware: ≥0.74 dừng, <0.68 → Phase B
+- [ ] Neutral augmentation từ MAMS dataset — **Plan ready, chờ Stage 1 improvement xong**
+
+---
+
+## Stage 1 Improvement Experiments (Phase A)
+
+### Code changes (commit `7c158b3`, `81e8038`, `c7a66e2`)
+
+- `src/absa/category_model.py`: `AsymmetricLoss` class (gamma_neg, gamma_pos, margin, pos_weight); `CategoryDetector` gains `use_asl` / `use_cat_attention` flags
+- `scripts/04a_train_stage1.py`: multi-label stratified split (iterative-stratification + sklearn fallback), ASL/cat-attention config support
+- `scripts/05_evaluate_joint.py`: pass `use_asl` + `use_cat_attention` from config when loading Stage 1 model (**bug fix** — without this, Cat-Aware checkpoint loads into wrong architecture)
+- `configs/stage1_r5.yaml`: ASL experiment (gamma_neg=2, margin=0.05, pos_weight_cap=3.0)
+- `configs/stage1_r5_cataware.yaml`: Cat-Aware experiment (encoder_lr=1e-5, head_lr=5e-4, epochs=30)
+- `stage1_improvement.md`: full diagnostic + Phase A/B plan
+- **Tests:** 158/158 pass
+
+### Experiment Results (NB1 v5 — session lost, NB1 v6 re-running)
+
+#### ASL v1 — FAIL (`stage1_r5.yaml` v1: gamma_neg=4, no pos_weight)
+
+| Best Epoch | Val Cat F1 | Val P | Val R | Note |
+|-----------|------------|-------|-------|------|
+| 13 | 0.6718 | 0.598 | 0.767 | Early stop ep18 |
+
+**Root cause:** gamma_neg=4 + no pos_weight → easy negatives zeroed out, rare categories (DRINKS#PRICES: 20 train, LOCATION: 28 train) get near-zero gradient. R >> P throughout training (recall bias, imprecise).
+
+#### ASL v2 — FAIL (`stage1_r5.yaml` v2: gamma_neg=2, pos_weight_cap=3.0)
+
+| Best Epoch | Val Cat F1 | Note |
+|-----------|------------|------|
+| 7 | 0.3391 | Early stop ep12, worse than v1 |
+
+**Root cause:** pos_weight + ASL interaction broken. `los_pos *= pos_weight` applied before focusing term; gamma_pos=0 means no focusing dampens positives → positive gradient dominates 3x → training unstable, threshold erratic (0.20–0.41).
+
+**Verdict: ASL dropped.** Two attempts, both fail to beat R4 (val 0.7482). ASL designed without pos_weight — combining them overcorrects.
+
+#### Cat-Aware Attention v1 — PROMISING (NB1 v5, session lost)
+
+| Best Epoch | Val Cat F1 | Val P | Val R | Note |
+|-----------|------------|-------|-------|------|
+| 19 | **0.7222** | 0.724 | 0.721 | Max epochs hit (20), not converged |
+
+**Key finding:** P≈R (perfectly balanced) — first time any Stage 1 model achieves this. R4 and ASL both had R >> P (recall bias). Model likely not converged: jumped 0.683→0.722 at ep19, stopped at ep20 due to max_epochs.
+
+**Session lost before NB1 output was uploaded to Kaggle dataset.** Checkpoint gone.
+
+#### Cat-Aware Attention v2 — IN PROGRESS 🔄 (NB1 v6, `stage1_r5_cataware.yaml`: epochs=30)
+
+- Ep1: loss=0.5324, cat_f1=0.2719 | Ep2: loss=0.4756, cat_f1=0.3498 | Ep3: loss=0.4578, cat_f1=0.3282
+- Slightly behind v1 in early epochs due to longer warmup (255 steps vs 170). Expected to recover ep4+.
+- **Expected to converge higher than v1** (0.7222) with 10 extra epochs.
+
+**After NB1 v6 finishes:** Upload outputs to `p5-nb1-stage1` dataset → run NB3 (already updated for Cat-Aware).
+
+---
+
+## Stage 1 Diagnostic & Improvement Plan (2026-06-08)
+
+**Diagnosis:** Cat F1=0.6844 limited by **discrimination failure**, not data scarcity.
+
+**Per-category F1 (global strategy, test):**
+- Cao (F1>0.7): SERVICE#GENERAL 0.830, FOOD#QUALITY 0.819, RESTAURANT#GENERAL 0.724
+- Trung bình (0.5-0.7): FOOD#PRICES 0.654, AMBIENCE 0.625 (P=0.485 over-firing), RESTAURANT#PRICES 0.500
+- Thấp (<0.4): DRINKS#QUALITY 0.353, DRINKS#STYLE_OPTIONS 0.333, **FOOD#STYLE_OPTIONS 0.272** (128 train!), **RESTAURANT#MISC 0.232** (97 train!)
+- Zero: LOCATION 0.133, DRINKS#PRICES 0.000
+
+**Root causes:**
+1. **Correlated label interference:** FOOD#STYLE_OPTIONS co-occurs 58.6% with FOOD#QUALITY → BCE suppresses it
+2. **Semantic boundary diffusion:** RESTAURANT#MISC unclear boundary with GENERAL/AMBIENCE
+3. **AMBIENCE over-firing:** P=0.485, R=0.877 — shared CLS can't discriminate
+4. **Val loss plateau after epoch 7** — later improvements are threshold artifact only
+
+**Plan:** `stage1_improvement.md`
+- Phase A (1 session): Asymmetric Loss + Category-Aware Attention Pooling → target Cat F1 ≥ 0.74
+- Phase B (conditional): Hierarchical Entity→Attribute architecture
 
 ---
 
