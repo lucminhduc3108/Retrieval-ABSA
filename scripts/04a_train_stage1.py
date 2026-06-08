@@ -60,21 +60,38 @@ def main():
     if args.limit:
         train_records = train_records[:args.limit]
 
-    stratify_key = [min(sum(r["category_vector"]), 2) for r in train_records]
-    train_records, val_records = train_test_split(
-        train_records, test_size=cfg["val_ratio"],
-        random_state=cfg["seed"], stratify=stratify_key,
-    )
-    logger.info("Train: %d, Val: %d", len(train_records), len(val_records))
+    try:
+        import numpy as np
+        from iterstrat.ml_stratifiers import MultilabelStratifiedShuffleSplit
+        label_matrix = np.array([r["category_vector"] for r in train_records])
+        msss = MultilabelStratifiedShuffleSplit(n_splits=1, test_size=cfg["val_ratio"],
+                                               random_state=cfg["seed"])
+        for train_idx, val_idx in msss.split(label_matrix, label_matrix):
+            train_records, val_records = ([train_records[i] for i in train_idx],
+                                          [train_records[i] for i in val_idx])
+        logger.info("Multi-label stratified split: Train %d, Val %d",
+                    len(train_records), len(val_records))
+    except ImportError:
+        stratify_key = [min(sum(r["category_vector"]), 2) for r in train_records]
+        train_records, val_records = train_test_split(
+            train_records, test_size=cfg["val_ratio"],
+            random_state=cfg["seed"], stratify=stratify_key,
+        )
+        logger.info("Train: %d, Val: %d", len(train_records), len(val_records))
 
-    pw_cap = cfg.get("pos_weight_cap", 5.0)
-    if pw_cap is None:
+    use_asl = cfg.get("use_asl", False)
+    if use_asl:
         pos_weight = None
-        logger.info("pos_weight: disabled (no class balancing)")
+        logger.info("ASL enabled — pos_weight disabled")
     else:
-        pos_weight = compute_pos_weight(train_records, cap=pw_cap).to(device)
-        logger.info("pos_weight (cap=%.1f): %s",
-                    pw_cap, [f"{w:.2f}" for w in pos_weight.tolist()])
+        pw_cap = cfg.get("pos_weight_cap", 5.0)
+        if pw_cap is None:
+            pos_weight = None
+            logger.info("pos_weight: disabled (no class balancing)")
+        else:
+            pos_weight = compute_pos_weight(train_records, cap=pw_cap).to(device)
+            logger.info("pos_weight (cap=%.1f): %s",
+                        pw_cap, [f"{w:.2f}" for w in pos_weight.tolist()])
 
     train_ds = CategoryDataset(train_records, tokenizer_name=cfg["model_name"],
                                max_length=cfg["max_seq_length"])
@@ -83,17 +100,31 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=cfg["batch_size"], shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=cfg["batch_size"])
 
+    use_cat_attention = cfg.get("use_cat_attention", False)
     model = CategoryDetector(
         model_name=cfg["model_name"],
         num_categories=cfg["num_categories"],
         pos_weight=pos_weight,
+        use_asl=use_asl,
+        asl_gamma_neg=cfg.get("asl_gamma_neg", 4),
+        asl_gamma_pos=cfg.get("asl_gamma_pos", 0),
+        asl_margin=cfg.get("asl_margin", 0.05),
+        use_cat_attention=use_cat_attention,
     ).to(device)
 
     encoder_lr = float(cfg.get("encoder_lr", 2e-5))
     head_lr = float(cfg.get("head_lr", 1e-4))
+    if use_cat_attention:
+        head_params = (list(model.category_head.parameters()) +
+                       list(model.cat_queries.parameters()) +
+                       list(model.cat_attention.parameters()) +
+                       list(model.cat_norm.parameters()))
+    else:
+        head_params = (list(model.category_head.parameters()) +
+                       list(model.pooler.parameters()))
     param_groups = [
         {"params": list(model.encoder.parameters()), "lr": encoder_lr},
-        {"params": list(model.category_head.parameters()) + list(model.pooler.parameters()), "lr": head_lr},
+        {"params": head_params, "lr": head_lr},
     ]
     optimizer = torch.optim.AdamW(param_groups, weight_decay=cfg["weight_decay"])
 

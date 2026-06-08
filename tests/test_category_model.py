@@ -1,6 +1,6 @@
 import torch
 
-from src.absa.category_model import CategoryDetector
+from src.absa.category_model import AsymmetricLoss, CategoryDetector
 
 
 def _make_batch(batch_size=2, seq_len=16, vocab_size=128):
@@ -47,3 +47,26 @@ def test_gradient_flows():
     out = model(ids, mask, category_labels=labels)
     out["loss"].backward()
     assert model.category_head.weight.grad is not None
+
+
+def test_asl_loss_forward():
+    model = CategoryDetector(model_name="microsoft/deberta-v3-base", num_categories=12,
+                             use_asl=True, asl_gamma_neg=4, asl_gamma_pos=0, asl_margin=0.05)
+    ids, mask = _make_batch()
+    labels = torch.zeros(2, 12)
+    labels[0, 0] = 1.0
+    out = model(ids, mask, category_labels=labels)
+    assert out["logits"].shape == (2, 12)
+    assert out["loss"] is not None
+    assert out["loss"].ndim == 0
+
+
+def test_cat_attention_forward():
+    model = CategoryDetector(model_name="microsoft/deberta-v3-base", num_categories=12,
+                             use_cat_attention=True)
+    ids, mask = _make_batch()
+    labels = torch.zeros(2, 12)
+    labels[0, 3] = 1.0
+    out = model(ids, mask, category_labels=labels)
+    assert out["logits"].shape == (2, 12)
+    assert out["loss"] is not None
