@@ -1,5 +1,7 @@
 from src.data.category_builder import (
     CATEGORY_LIST, CAT2IDX, NUM_CATEGORIES, POL2ID,
+    ENTITY_LIST, ENT2IDX, NUM_ENTITIES, ENTITY2ATTRS,
+    MULTI_ATTR_ENTITIES, ATTR2IDX,
     build_category_records, build_sentiment_records,
 )
 
@@ -116,3 +118,53 @@ def test_category_vector_length():
     records = build_category_records(SAMPLE_PARSED, split="train")
     for r in records:
         assert len(r["category_vector"]) == NUM_CATEGORIES
+
+
+# --- Hierarchical constants ---
+
+def test_entity_list_has_6():
+    assert NUM_ENTITIES == 6
+    assert len(ENTITY_LIST) == 6
+    assert ENTITY_LIST == sorted(ENTITY_LIST)
+
+
+def test_ent2idx_consistent():
+    for i, ent in enumerate(ENTITY_LIST):
+        assert ENT2IDX[ent] == i
+
+
+def test_entity2attrs_covers_all_categories():
+    reconstructed = set()
+    for entity, attrs in ENTITY2ATTRS.items():
+        for attr in attrs:
+            reconstructed.add(f"{entity}#{attr}")
+    assert reconstructed == set(CATEGORY_LIST)
+
+
+def test_multi_attr_entities():
+    for ent in MULTI_ATTR_ENTITIES:
+        assert len(ENTITY2ATTRS[ent]) > 1
+    for ent in ENTITY_LIST:
+        if ent not in MULTI_ATTR_ENTITIES:
+            assert ENTITY2ATTRS[ent] == ["GENERAL"]
+
+
+# --- Hierarchical record fields ---
+
+def test_build_category_records_hierarchical_fields():
+    records = build_category_records(SAMPLE_PARSED, split="train")
+    r1 = records[0]  # FOOD#QUALITY + SERVICE#GENERAL
+    assert len(r1["entity_vector"]) == NUM_ENTITIES
+    assert r1["entity_vector"][ENT2IDX["FOOD"]] == 1
+    assert r1["entity_vector"][ENT2IDX["SERVICE"]] == 1
+    assert sum(r1["entity_vector"]) == 2
+    assert r1["food_attr_vector"][ATTR2IDX["FOOD"]["QUALITY"]] == 1
+    assert sum(r1["food_attr_vector"]) == 1
+    assert sum(r1["drinks_attr_vector"]) == 0
+    assert sum(r1["restaurant_attr_vector"]) == 0
+
+    r2 = records[1]  # RESTAURANT#PRICES
+    assert r2["entity_vector"][ENT2IDX["RESTAURANT"]] == 1
+    assert sum(r2["entity_vector"]) == 1
+    assert r2["restaurant_attr_vector"][ATTR2IDX["RESTAURANT"]["PRICES"]] == 1
+    assert sum(r2["restaurant_attr_vector"]) == 1

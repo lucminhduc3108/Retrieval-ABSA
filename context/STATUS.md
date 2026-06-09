@@ -1,6 +1,6 @@
 # Project Status — Retrieval-ABSA
 
-**Last updated:** 2026-06-08 (Stage 1 improvement in progress — ASL dropped (2 attempts), Cat-Aware v2 running on Kaggle NB1 v6 (30 epochs, ep3/30))
+**Last updated:** 2026-06-10 (Phase B Hierarchical code complete — 175/175 tests pass, smoke test OK. Ready for Kaggle training)
 
 ---
 
@@ -32,33 +32,38 @@ Phase 1–4 dùng pipeline cũ: BIO tagging + given category → sentiment. **Kh
 
 **Full design:** `REDESIGN_DISCUSSION.md`
 
-### Current Best Results (Phase 5, Test Set — NB3 Run 3, 2026-06-08)
+### Current Best Results (Phase 5, Test Set — NB3 v4, 2026-06-09)
 
-Stage 1: R4 | Stage 2: Run 2 (retrieval)
+Stage 1: Cat-Aware R5 | Stage 2: Run 2 (retrieval)
 
 | Strategy | Cat F1 | No-Ret Joint F1 | No-Ret Sent Acc\|CC | Ret Joint F1 | Ret Sent Acc\|CC |
 |----------|--------|-----------------|---------------------|-------------|-----------------|
-| per_category | 0.6765 | 0.6028 | 0.8956 | 0.5977 | 0.8880 |
-| **global (0.60)** | **0.6844** | **0.6120** | 0.8990 | 0.6067 | 0.8913 |
-| topk (k=1) | 0.6602 | 0.5979 | **0.9112** | 0.5889 | 0.8975 |
+| per_category | 0.6858 | 0.6135 | 0.8992 | 0.6057 | 0.8878 |
+| **global (0.80)** | **0.6962** | **0.6235** | 0.9006 | 0.6139 | 0.8867 |
+| topk (k=1) | 0.6797 | 0.6158 | **0.9115** | 0.6024 | 0.8916 |
 
-**Best config:** Global strategy (threshold=0.60) + No-Retrieval → **Joint F1 = 0.6120**
-No-retrieval beats retrieval by ~0.5pp (down from 6.4pp in Phase 2 old pipeline).
+**Best config:** Global strategy (threshold=0.80) + No-Retrieval → **Joint F1 = 0.6235**
+No-retrieval beats retrieval by ~1pp. Cat-Aware improved Cat F1 +1.18pp and Joint F1 +1.15pp over R4.
+
+### Previous Best (R4 baseline, NB3 Run 3)
+
+Global (0.60): Cat F1=0.6844 | No-Ret Joint F1=0.6120 | Ret Joint F1=0.6067
 
 ### Kaggle Notebooks (Phase 5)
 
 | Notebook | Kaggle URL | Status | Output dataset |
 |----------|-----------|--------|----------------|
-| **P5-NB1: Stage 1 Train** | [lcminhc/p5-nb1-stage1-train](https://www.kaggle.com/code/lcminhc/p5-nb1-stage1-train) | 🔄 v6 running (Cat-Aware 30ep) | `p5-nb1-stage1` |
+| **P5-NB1: Stage 1 Train** | [lcminhc/p5-nb1-stage1-train](https://www.kaggle.com/code/lcminhc/p5-nb1-stage1-train) | ✅ v6 done (Cat-Aware 30ep) | `p5-nb1-stage1` |
 | **P5-NB2: Stage 2 Train** | [lcminhc/p5-nb2-stage2-train](https://www.kaggle.com/code/lcminhc/p5-nb2-stage2-train) | ✅ Run 2 done (ret) | `p5-nb2-stage2` |
-| **P5-NB3: Joint Eval** | [lcminhc/p5-nb3-joint-eval](https://www.kaggle.com/code/lcminhc/p5-nb3-joint-eval) | ⏳ Pending NB1 v6 output | — |
+| **P5-NB3: Joint Eval** | [lcminhc/p5-nb3-joint-eval](https://www.kaggle.com/code/lcminhc/p5-nb3-joint-eval) | ✅ v4 done (Cat-Aware eval) | — |
 
 ### Stage 1 Training History
 
 | Run | Val Cat F1 | Test Cat F1 | Config | Note |
 |-----|-----------|------------|--------|------|
 | R1/R2/R3 | — | 0.23 | old configs | encoder_lr too low, pos_weight too high |
-| **R4** | 0.7482 (ep16) | **0.6844** | `stage1_r4.yaml` | ContextPooler, encoder_lr=2e-5, pos_weight_cap=3.0, fp16=false |
+| **R4** | 0.7482 (ep16) | 0.6844 | `stage1_r4.yaml` | ContextPooler, encoder_lr=2e-5, pos_weight_cap=3.0, fp16=false |
+| **R5 Cat-Aware** | 0.7243 (ep26) | **0.6962** | `stage1_r5_cataware.yaml` | Cat-Aware Attention (12 learnable queries + MHA), encoder_lr=1e-5, head_lr=5e-4, 30ep |
 
 ### Stage 2 Training History
 
@@ -91,23 +96,62 @@ Modified: `scripts/01_prepare_data.py` (output category_detection.jsonl + sentim
 
 ### Experiment Results
 
-| Experiment | Best Val Cat F1 | Note |
-|------------|----------------|------|
-| ASL v1 (gamma_neg=4, no pos_weight) | 0.6718 (ep13) | Thua R4. R>>P, rare categories get near-zero gradient |
-| ASL v2 (gamma_neg=2, pos_weight=3.0) | 0.3391 (ep7) | Worse. pos_weight + ASL interaction broken: amplified positive loss overwhelms focusing |
-| **Cat-Aware v1** (epochs=20) | **0.7222 (ep19)** | P≈R balanced (0.724/0.721). Not converged — session lost before upload |
-| **Cat-Aware v2** (epochs=30) | 🔄 Running (ep3/30) | Slightly behind v1 in warmup phase, expected to recover ep4+ |
+| Experiment | Best Val Cat F1 | Test Cat F1 | Note |
+|------------|----------------|------------|------|
+| ASL v1 (gamma_neg=4, no pos_weight) | 0.6718 (ep13) | — | Thua R4. R>>P, rare categories get near-zero gradient |
+| ASL v2 (gamma_neg=2, pos_weight=3.0) | 0.3391 (ep7) | — | Worse. pos_weight + ASL interaction broken |
+| Cat-Aware v1 (epochs=20) | 0.7222 (ep19) | — | Session lost before upload |
+| **Cat-Aware v2** (epochs=30) | **0.7243 (ep26)** | **0.6962** | Val→test gap 2.8pp (better than R4's 6.4pp). Plateau ep12-15, overfit after |
 
-**ASL: DROPPED.** Không tương thích với dataset nhỏ — pos_weight/gamma overcorrect theo những hướng khác nhau.
+**ASL: DROPPED.** Không tương thích với dataset nhỏ.
 
-**Cat-Aware Attention:** Learnable query per category attends vào token sequence thay vì shared CLS. Đây là kiến trúc promising (first model đạt P≈R balance).
+**Cat-Aware Attention: ACCEPTED as new baseline.** Test Cat F1=0.6962 (+1.18pp over R4), Joint F1=0.6235 (+1.15pp). Improves AMBIENCE (+8.3pp), FOOD#STYLE_OPTIONS (+8pp), LOCATION (+11.7pp) but hurts FOOD#PRICES (-31pp), RESTAURANT#PRICES (-15pp) due to high global threshold.
 
-**After NB1 v6 finishes:** Upload outputs to `p5-nb1-stage1` dataset → run NB3 → compare test Cat F1 vs R4 (0.6844).
+**Decision:** Cat F1=0.6962 falls in 0.68-0.73 range → Cat-Aware tuning unlikely to reach 0.74 (val plateau at 0.7243, architecture ceiling). **Proceed to Phase B: Hierarchical Entity→Attribute.**
 
-**Decision criteria:**
-- Test Cat F1 ≥ 0.74 → dừng Phase A, đủ cho thesis
-- Test Cat F1 0.68–0.73 → cân nhắc thêm epochs hoặc Phase B
-- Test Cat F1 < 0.68 → Phase B (Hierarchical Entity→Attribute)
+**Side fix for next training:** `CategoryTrainer.evaluate()` only uses per_category threshold for model selection. Add global threshold F1 for checkpoint selection (~10 lines, zero GPU cost).
+
+---
+
+## Phase B: Hierarchical Entity→Attribute (2026-06-10)
+
+**Goal:** Cat F1 0.6962 → ≥0.74 by decomposing 12-flat into 6-entity + 3-attribute.
+
+### Architecture
+
+```
+DeBERTa → CLS → ContextPooler(768→768, Tanh, Dropout)
+  ├── Entity Head: Linear(768, 6) — 6 sigmoid, multi-label
+  ├── FOOD Attr Head: Linear(768, 3) — PRICES / QUALITY / STYLE_OPTIONS
+  ├── DRINKS Attr Head: Linear(768, 3) — PRICES / QUALITY / STYLE_OPTIONS
+  └── RESTAURANT Attr Head: Linear(768, 3) — GENERAL / MISCELLANEOUS / PRICES
+
+AMBIENCE/LOCATION/SERVICE → entity detected = emit ENTITY#GENERAL (no attr head)
+Loss = L_entity + L_food_attr(masked) + L_drinks_attr(masked) + L_restaurant_attr(masked)
+Attribute loss only computed for samples where gold entity is active.
+```
+
+### Code Changes (complete, 2026-06-10)
+
+| File | Change |
+|------|--------|
+| `src/data/category_builder.py` | `ENTITY_LIST`, `ENT2IDX`, `ENTITY2ATTRS`, `MULTI_ATTR_ENTITIES`, `ATTR2IDX`; `build_category_records` adds `entity_vector` + 3 `*_attr_vector` |
+| `src/absa/category_model.py` | `HierarchicalCategoryDetector` — entity head + 3 attr heads, masked attr loss |
+| `src/absa/category_dataset.py` | `HierarchicalCategoryDataset` — returns entity_labels + 3 attr_labels |
+| `src/absa/category_trainer.py` | `tune_entity_thresholds`, `tune_attr_thresholds`, `hierarchical_decode`, `HierarchicalCategoryTrainer` |
+| `scripts/04a_train_stage1.py` | `use_hierarchical` branch + `compute_entity_pos_weight` / `compute_attr_pos_weight` |
+| `scripts/05_evaluate_joint.py` | Hierarchical model loading, `collect_hierarchical_logits`, hierarchical decode with val threshold tuning |
+| `configs/stage1_hierarchical.yaml` | `use_hierarchical: true`, encoder_lr=1e-5, head_lr=5e-4, 30 epochs |
+| Tests | 14 new tests (model/trainer/builder/dataset), 175/175 pass |
+
+### Status
+
+- [x] Code complete — all files implemented
+- [x] Data regenerated — `category_detection.jsonl` has hierarchical fields
+- [x] Tests — 175/175 pass
+- [x] Smoke test — `--limit 16 --epochs 1` OK
+- [ ] **NB1 v7:** Train on Kaggle T4, 30 epochs
+- [ ] **NB3 v5:** Eval hierarchical vs Cat-Aware R5 baseline
 
 ---
 
@@ -132,9 +176,13 @@ Modified: `scripts/01_prepare_data.py` (output category_detection.jsonl + sentim
 
 ## Next Actions
 
-- [ ] **Chờ NB1 v6 xong** → Upload outputs to `p5-nb1-stage1` dataset
-- [ ] **Chạy NB3** với Cat-Aware checkpoint (`stage1_r5_cataware_best.pt`, config `stage1_r5_cataware.yaml`)
-- [ ] **Quyết định Phase B** dựa trên test Cat F1
+- [x] **NB1 v6 done** → Cat-Aware v2, outputs uploaded (2026-06-08)
+- [x] **NB3 v4 done** → Cat-Aware test Cat F1=0.6962, Joint F1=0.6235 (2026-06-09)
+- [x] **Decision:** Cat-Aware accepted as baseline. Proceed to Phase B (Hierarchical)
+- [x] **Phase B code complete** (2026-06-10) — 175/175 tests, smoke test OK
+- [ ] **NB1 v7:** Train hierarchical on Kaggle T4 (30 epochs, `stage1_hierarchical.yaml`)
+- [ ] **NB3 v5:** Eval hierarchical → compare Cat F1 vs 0.6962 baseline
+- [ ] **Side fix:** Add global threshold F1 to `CategoryTrainer.evaluate()` for model selection
 - [ ] Neutral augmentation từ MAMS dataset — pending Stage 1 improvement
 
 ---

@@ -5,9 +5,13 @@ from src.absa.category_trainer import (
     _tune_thresholds, _apply_thresholds,
     _tune_global_threshold, _apply_global_threshold,
     tune_topk, apply_topk,
-    CategoryTrainer,
+    tune_entity_thresholds, tune_attr_thresholds,
+    hierarchical_decode,
+    CategoryTrainer, HierarchicalCategoryTrainer,
 )
-from src.data.category_builder import NUM_CATEGORIES, CATEGORY_LIST
+from src.data.category_builder import (
+    NUM_CATEGORIES, CATEGORY_LIST, NUM_ENTITIES, ENT2IDX, ENTITY2ATTRS,
+)
 
 
 def test_tune_thresholds_returns_correct_length():
@@ -141,3 +145,109 @@ def test_trainer_evaluate():
     assert isinstance(metrics["threshold"], float)
     assert "thresholds" in metrics
     assert len(metrics["thresholds"]) == NUM_CATEGORIES
+
+
+# --- Hierarchical tests ---
+
+def test_tune_entity_thresholds():
+    logits = torch.randn(20, NUM_ENTITIES)
+    labels = torch.zeros(20, NUM_ENTITIES)
+    labels[:10, 0] = 1.0
+    thresholds = tune_entity_thresholds(logits, labels)
+    assert len(thresholds) == NUM_ENTITIES
+    assert all(0.05 <= t <= 0.90 for t in thresholds)
+
+
+def test_tune_attr_thresholds_with_mask():
+    logits = torch.randn(20, 3)
+    labels = torch.zeros(20, 3)
+    labels[:5, 0] = 1.0
+    entity_labels = torch.zeros(20, NUM_ENTITIES)
+    entity_labels[:10, ENT2IDX["FOOD"]] = 1.0
+    thresholds = tune_attr_thresholds(
+        logits, labels, entity_labels, ENT2IDX["FOOD"])
+    assert len(thresholds) == 3
+    # Only 10 samples have FOOD entity active — threshold should be tuned on those 10
+
+    # With no FOOD samples → defaults to 0.5
+    empty_ent = torch.zeros(20, NUM_ENTITIES)
+    thresholds_empty = tune_attr_thresholds(
+        logits, labels, empty_ent, ENT2IDX["FOOD"])
+    assert thresholds_empty == [0.5, 0.5, 0.5]
+
+
+def test_hierarchical_decode_basic():
+    ent_logits = torch.full((1, NUM_ENTITIES), -10.0)
+    ent_logits[0, ENT2IDX["FOOD"]] = 5.0      # FOOD fires
+    ent_logits[0, ENT2IDX["SERVICE"]] = 5.0    # SERVICE fires (single-attr)
+    food_logits = torch.full((1, 3), -10.0)
+    food_logits[0, 1] = 5.0  # QUALITY fires (index 1)
+    drinks_logits = torch.full((1, 3), -10.0)
+    rest_logits = torch.full((1, 3), -10.0)
+
+    ent_thresh = [0.5] * NUM_ENTITIES
+    food_thresh = [0.5, 0.5, 0.5]
+    drinks_thresh = [0.5, 0.5, 0.5]
+    rest_thresh = [0.5, 0.5, 0.5]
+
+    result = hierarchical_decode(
+        ent_logits, food_logits, drinks_logits, rest_logits,
+        ent_thresh, food_thresh, drinks_thresh, rest_thresh)
+    assert len(result) == 1
+    assert "FOOD#QUALITY" in result[0]
+    assert "SERVICE#GENERAL" in result[0]
+    assert len(result[0]) == 2
+
+
+def test_hierarchical_decode_no_attr_fires():
+    ent_logits = torch.full((1, NUM_ENTITIES), -10.0)
+    ent_logits[0, ENT2IDX["FOOD"]] = 5.0
+    food_logits = torch.full((1, 3), -10.0)  # all below threshold
+    drinks_logits = torch.full((1, 3), -10.0)
+    rest_logits = torch.full((1, 3), -10.0)
+
+    result = hierarchical_decode(
+        ent_logits, food_logits, drinks_logits, rest_logits,
+        [0.5] * NUM_ENTITIES, [0.5] * 3, [0.5] * 3, [0.5] * 3)
+    assert result[0] == set()
+
+
+def test_hierarchical_trainer_evaluate():
+    from src.absa.category_model import HierarchicalCategoryDetector
+    model = HierarchicalCategoryDetector()
+
+    n, seq_len = 8, 16
+    input_ids = torch.randint(0, 100, (n, seq_len))
+    attention_mask = torch.ones(n, seq_len, dtype=torch.long)
+    ent_labels = torch.zeros(n, NUM_ENTITIES)
+    ent_labels[:, ENT2IDX["FOOD"]] = 1.0
+    food_labels = torch.zeros(n, 3)
+    food_labels[:, 1] = 1.0
+    drinks_labels = torch.zeros(n, 3)
+    rest_labels = torch.zeros(n, 3)
+
+    ds = TensorDataset(input_ids, attention_mask,
+                       ent_labels, food_labels, drinks_labels, rest_labels)
+
+    def collate(batch):
+        ids, mask, ent, food, drinks, rest = zip(*batch)
+        return {
+            "input_ids": torch.stack(ids),
+            "attention_mask": torch.stack(mask),
+            "entity_labels": torch.stack(ent),
+            "food_attr_labels": torch.stack(food),
+            "drinks_attr_labels": torch.stack(drinks),
+            "restaurant_attr_labels": torch.stack(rest),
+        }
+    loader = DataLoader(ds, batch_size=4, collate_fn=collate)
+
+    trainer = HierarchicalCategoryTrainer(
+        model=model, optimizer=None, scheduler=None,
+        device="cpu", log_path="",
+    )
+    metrics = trainer.evaluate(loader)
+    assert "category_f1" in metrics
+    assert "entity_thresholds" in metrics
+    assert len(metrics["entity_thresholds"]) == NUM_ENTITIES
+    assert "food_attr_thresholds" in metrics
+    assert len(metrics["food_attr_thresholds"]) == 3
