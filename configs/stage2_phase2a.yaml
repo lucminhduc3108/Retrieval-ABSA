@@ -1,11 +1,11 @@
 model_name: microsoft/deberta-v3-base
 num_sent_labels: 3
 embed_dim: 64
-tau: 0.5
+tau: 0.1
 use_retrieval: true
 use_learnable_retriever: true
 lambda_rank: 0.1
-rank_margin: 0.1
+rank_margin: 0.5
 batch_size: 32
 epochs: 20
 encoder_lr: 2.0e-6
@@ -21,5 +21,5 @@ seed: 42
 val_ratio: 0.2
 ckpt_dir: checkpoints/stage2_phase2a
 log_path: logs/stage2_phase2a_training.jsonl
-sentiment_path: data/processed/sentiment_records.jsonl
+sentiment_path: data/processed/sentiment_records_aug.jsonl
 grad_accum_steps: 2

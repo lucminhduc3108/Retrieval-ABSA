@@ -107,6 +107,7 @@ def test_tau_affects_alpha_concentration():
     lr_flat.polarity_embedding = lr_sharp.polarity_embedding
 
     qv, nv, np_, _ = _make_inputs(B=1, K=3)
+    np_ = torch.tensor([[0, 1, 2]], dtype=torch.long)
     repr_sharp, _ = lr_sharp(qv, nv, np_)
     repr_flat, _ = lr_flat(qv, nv, np_)
     # Sharp tau concentrates mass → different output from flat tau

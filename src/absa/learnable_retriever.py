@@ -43,8 +43,8 @@ class LearnableRetriever(nn.Module):
         diff_m = diff_mask[has_both]
 
         BIG = 1e9
-        best_same = scores_f.masked_fill(~same_m, -BIG).max(dim=1).values
+        worst_same = scores_f.masked_fill(~same_m, BIG).min(dim=1).values
         best_diff = scores_f.masked_fill(~diff_m, -BIG).max(dim=1).values
 
-        triplet = F.relu(self.margin - best_same + best_diff)
+        triplet = F.relu(self.margin - worst_same + best_diff)
         return triplet.mean()

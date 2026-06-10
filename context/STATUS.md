@@ -1,6 +1,6 @@
 # Project Status — Retrieval-ABSA
 
-**Last updated:** 2026-06-10 (Phase 2a code complete — LearnableRetriever (W matrix), dataset/model/trainer/script changes, 197/197 tests pass. Ready for NB2 v3 on Kaggle)
+**Last updated:** 2026-06-10 (NB2 v4 đang chạy trên Kaggle — Phase 2a (W matrix) + no-ret baseline training)
 
 ---
 
@@ -201,7 +201,7 @@ Early stopped epoch 27 (patience=5). Best val Cat F1 = **0.7002** at epoch 22.
   - `src/absa/sentiment_trainer.py`: combined loss, per-class F1 logging
   - `scripts/04b_train_stage2.py`, `scripts/05_evaluate_joint.py`: full support
   - `configs/stage2_phase2a.yaml` (NEW), `configs/stage2_noret.yaml` fixed
-- [ ] **NB2 v3:** Train Phase 2a on Kaggle, compare ret (W) vs ret (cosine) vs no-ret
+- [ ] **NB2 v4:** 🔄 Đang chạy trên Kaggle — Phase 2a (W matrix) + no-ret (20ep). Sau khi xong: upload outputs → dataset `p5-nb2-stage2`
 - [ ] **NB3 v5:** Joint eval Cat-Aware R5 + Phase 2a sentiment
 - [ ] Neutral augmentation từ MAMS dataset — pending (deferred)
 
@@ -217,21 +217,24 @@ Early stopped epoch 27 (patience=5). Best val Cat F1 = **0.7002** at epoch 22.
 
 **Category mapping:** 5/8 map trực tiếp (service, ambience, miscellaneous, staff, place); 3/8 cần LLM annotate (food, price, menu).
 
-**Target:** 15–20% neutral (+240–425 samples). **Full plan:** `.claude/plans/context-after-nb2-training-curried-volcano.md`
+**Target:** 15–20% neutral (+650 samples). 
+**Update 2026-06-10:** Đã thực hiện trích xuất 650 mẫu neutral từ 5 danh mục an toàn (1-1 map: place, miscellaneous, ambience, service, staff) của MAMS-ACSA. Dữ liệu mới đã được ghi vào `data/processed/sentiment_records_aug.jsonl`, nâng tỷ lệ Neutral trong tập Train từ 4% lên ~20%.
 
 ---
 
-## Phase 2a: Learnable Retrieval Alignment (Next)
+## Phase 2a: Learnable Retrieval Alignment
 
 **Problem:** No-ret beats ret by ~1pp (Joint F1 0.6235 vs 0.6139). Frozen cosine retriever is polarity-blind.
 
-**Approach:** Replace `score(q,k) = q^T k` with `score(q,k) = q^T W k`. W is 256×256 learnable matrix (65K params). FAISS still selects candidates, W re-scores for label interpolation. Add ranking loss (same-polarity neighbors score higher).
+**Approach:** Replace `score(q,k) = q^T k` with `score(q,k) = q^T W k`. W là learnable 256×256 matrix (65K params). FAISS vẫn select candidates, W re-score cho label interpolation. Ranking loss: same-polarity neighbors score cao hơn.
 
-**Key changes:** New `LearnableRetriever` module, dataset returns query_vec + neighbor_vecs, combined loss = L_sentiment + 0.1 * L_rank.
+**Code:** `src/absa/learnable_retriever.py` — commit `68edc6d`. Sửa lỗi toán học dùng hard positive `.min()` thay vì `.max()` để ranking loss có tác dụng.
 
-**Full plan:** `.claude/plans/135-0s-111-info-epoch-mighty-pebble.md`
+**Config:** `configs/stage2_phase2a.yaml` — `retriever_lr=5e-4`, `lambda_rank=0.1`, `tau=0.1` (giảm để tăng độ sắc nét nội suy), `rank_margin=0.5` (tăng để kéo dãn không gian vector), 20 epochs, data dùng `sentiment_records_aug.jsonl`.
 
-**Backup:** If W re-score insufficient, switch to full PyTorch scoring (W selects neighbors from entire corpus, bypassing FAISS).
+**Status:** NB2 v4 đang train trên Kaggle (2026-06-10)
+
+**Backup:** Nếu W re-score không đủ → full PyTorch scoring (W score toàn bộ corpus ~2500 vectors, bypass FAISS).
 
 ---
 
