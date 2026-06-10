@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 from pathlib import Path
 
 import torch
@@ -71,7 +72,9 @@ class SentimentTrainer:
                     self.scaler.scale(loss).backward()
                 else:
                     loss.backward()
-                total_loss += out["combined_loss"].item()
+                loss_val = out["combined_loss"].item()
+                if not math.isnan(loss_val):
+                    total_loss += loss_val
 
                 is_accum_step = (step + 1) % self.grad_accum_steps == 0
                 is_last_step = (step + 1) == len(train_loader)
@@ -133,7 +136,9 @@ class SentimentTrainer:
         for batch in loader:
             out = self._run_batch(batch)
             if out["combined_loss"] is not None:
-                total_loss += out["combined_loss"].item()
+                loss_val = out["combined_loss"].item()
+                if not math.isnan(loss_val):
+                    total_loss += loss_val
             num_batches += 1
 
             preds = out["logits"].argmax(dim=-1).cpu().tolist()

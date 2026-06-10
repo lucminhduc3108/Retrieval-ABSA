@@ -64,6 +64,8 @@ def test_ranking_loss_zero_when_no_diff_polarity_neighbors():
     scores = torch.randn(B, K)
     loss = lr.ranking_loss(scores, neighbor_polarities, query_polarity)
     assert loss.item() == 0.0
+    # Zero fallback must stay on computation graph for backward()
+    assert loss.requires_grad
 
 
 def test_gradient_flows_through_W():
@@ -74,6 +76,27 @@ def test_gradient_flows_through_W():
     loss.backward()
     assert lr.W.weight.grad is not None
     assert lr.polarity_embedding.weight.grad is not None
+
+
+def test_ranking_loss_no_nan_with_fp16():
+    lr = LearnableRetriever().half()
+    B, K = 4, 3
+    query_polarity = torch.zeros(B, dtype=torch.long)
+    neighbor_polarities = torch.tensor([[0, 1, 2], [0, 0, 0], [1, 1, 0], [2, 0, 1]])
+    scores = torch.randn(B, K, dtype=torch.float16)
+    loss = lr.ranking_loss(scores, neighbor_polarities, query_polarity)
+    assert not torch.isnan(loss), f"ranking_loss is NaN: {loss}"
+    assert not torch.isinf(loss), f"ranking_loss is inf: {loss}"
+
+
+def test_forward_no_nan_with_fp16():
+    lr = LearnableRetriever().half()
+    qv = torch.randn(2, 256, dtype=torch.float16)
+    nv = torch.randn(2, 3, 256, dtype=torch.float16)
+    np_ = torch.randint(0, 3, (2, 3))
+    label_repr, scores = lr(qv, nv, np_)
+    assert not torch.isnan(label_repr).any(), "label_repr contains NaN"
+    assert not torch.isnan(scores).any(), "scores contains NaN"
 
 
 def test_tau_affects_alpha_concentration():

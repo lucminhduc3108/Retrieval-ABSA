@@ -18,19 +18,17 @@ class LearnableRetriever(nn.Module):
     def forward(self, query_vec: torch.Tensor,
                 neighbor_vecs: torch.Tensor,
                 neighbor_polarities: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        # query_vec: (B, D), neighbor_vecs: (B, K, D), neighbor_polarities: (B, K)
-        Wq = self.W(query_vec)  # (B, D)
-        scores = torch.bmm(neighbor_vecs, Wq.unsqueeze(-1)).squeeze(-1)  # (B, K)
-        alpha = F.softmax(scores / self.tau, dim=1)  # (B, K)
-        embeds = self.polarity_embedding(neighbor_polarities)  # (B, K, embed_dim)
-        label_repr = (alpha.unsqueeze(-1) * embeds).sum(dim=1)  # (B, embed_dim)
+        Wq = self.W(query_vec)
+        scores = torch.bmm(neighbor_vecs, Wq.unsqueeze(-1)).squeeze(-1)
+        alpha = F.softmax(scores.float() / self.tau, dim=1).to(scores.dtype)
+        embeds = self.polarity_embedding(neighbor_polarities)
+        label_repr = (alpha.unsqueeze(-1) * embeds).sum(dim=1)
         return label_repr, scores
 
     def ranking_loss(self, scores: torch.Tensor,
                      neighbor_polarities: torch.Tensor,
                      query_polarity: torch.Tensor) -> torch.Tensor:
-        # scores: (B, K), neighbor_polarities: (B, K), query_polarity: (B,)
-        same_mask = neighbor_polarities == query_polarity.unsqueeze(1)  # (B, K)
+        same_mask = neighbor_polarities == query_polarity.unsqueeze(1)
         diff_mask = ~same_mask
 
         has_same = same_mask.any(dim=1)
@@ -38,15 +36,15 @@ class LearnableRetriever(nn.Module):
         has_both = has_same & has_diff
 
         if not has_both.any():
-            return torch.tensor(0.0, device=scores.device)
+            return torch.tensor(0.0, device=scores.device, requires_grad=True)
 
-        INF = float("inf")
-        same_scores = scores.masked_fill(~same_mask, -INF)
-        diff_scores = scores.masked_fill(~diff_mask, -INF)
+        scores_f = scores[has_both].float()
+        same_m = same_mask[has_both]
+        diff_m = diff_mask[has_both]
 
-        best_same = same_scores.max(dim=1).values  # (B,)
-        best_diff = diff_scores.max(dim=1).values  # (B,)
+        BIG = 1e9
+        best_same = scores_f.masked_fill(~same_m, -BIG).max(dim=1).values
+        best_diff = scores_f.masked_fill(~diff_m, -BIG).max(dim=1).values
 
         triplet = F.relu(self.margin - best_same + best_diff)
-        triplet = triplet * has_both.float()
-        return triplet.sum() / has_both.float().sum()
+        return triplet.mean()
