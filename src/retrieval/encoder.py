@@ -15,7 +15,7 @@ class _RecordDataset(Dataset):
     def __getitem__(self, idx):
         r = self.records[idx]
         enc = self.tokenizer(
-            r["sentence"], r["aspect_category"],
+            r["sentence"], r.get("aspect_category", r.get("category")),
             max_length=self.max_length,
             padding="max_length",
             truncation=True,
