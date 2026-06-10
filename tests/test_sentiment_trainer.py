@@ -77,3 +77,60 @@ def test_train_saves_checkpoint_on_best_f1(tmp_path):
     assert (tmp_path / "best.pt").exists()
     assert "sentiment_macro_f1" in history[0]
     assert "sentiment_acc" in history[0]
+
+
+def test_evaluate_returns_per_class_f1():
+    model = SentimentPredictor(use_retrieval=False)
+    trainer = SentimentTrainer(
+        model=model, optimizer=None, scheduler=None,
+        device="cpu", log_path="",
+    )
+    loader = _make_loader(use_retrieval=False)
+    metrics = trainer.evaluate(loader)
+    assert "f1_positive" in metrics
+    assert "f1_negative" in metrics
+    assert "f1_neutral" in metrics
+    assert 0.0 <= metrics["f1_positive"] <= 1.0
+    assert 0.0 <= metrics["f1_negative"] <= 1.0
+    assert 0.0 <= metrics["f1_neutral"] <= 1.0
+
+
+def _make_learnable_loader(n=8, seq_len=16, k=2, vec_dim=256):
+    input_ids = torch.randint(0, 100, (n, seq_len))
+    attention_mask = torch.ones(n, seq_len, dtype=torch.long)
+    sentiment_label = torch.randint(0, 3, (n,))
+    nb_pol = torch.randint(0, 3, (n, k))
+    nb_scores = torch.rand(n, k)
+    query_vec = torch.randn(n, vec_dim)
+    neighbor_vecs = torch.randn(n, k, vec_dim)
+    query_polarity = torch.randint(0, 3, (n,))
+
+    ds = TensorDataset(input_ids, attention_mask, sentiment_label,
+                       nb_pol, nb_scores, query_vec, neighbor_vecs, query_polarity)
+
+    def collate(batch):
+        ids, mask, lab, pol, sc, qv, nv, qp = zip(*batch)
+        return {
+            "input_ids": torch.stack(ids),
+            "attention_mask": torch.stack(mask),
+            "sentiment_label": torch.stack(lab),
+            "neighbor_polarities": torch.stack(pol),
+            "neighbor_scores": torch.stack(sc),
+            "query_vec": torch.stack(qv),
+            "neighbor_vecs": torch.stack(nv),
+            "query_polarity": torch.stack(qp),
+        }
+
+    return DataLoader(ds, batch_size=4, collate_fn=collate)
+
+
+def test_combined_loss_training_with_learnable_retriever():
+    model = SentimentPredictor(use_retrieval=True, use_learnable_retriever=True)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    trainer = SentimentTrainer(
+        model=model, optimizer=optimizer, scheduler=None,
+        device="cpu", log_path="", lambda_rank=0.1,
+    )
+    loader = _make_learnable_loader()
+    history = trainer.train(loader, loader, epochs=1)
+    assert "sentiment_macro_f1" in history[0]

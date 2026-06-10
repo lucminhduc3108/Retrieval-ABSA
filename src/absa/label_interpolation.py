@@ -18,7 +18,18 @@ class LabelInterpolation(nn.Module):
             return torch.zeros(batch, self.embed_dim,
                                device=neighbor_polarities.device)
 
+        # Detect padding: positions with -inf scores
+        is_padding = torch.isinf(neighbor_scores) & (neighbor_scores < 0)
+        all_padding = is_padding.all(dim=1)  # (B,) — rows with no real neighbors
+
+        # Replace -inf with 0.0 for safe softmax; these positions get zeroed out below
+        safe_scores = neighbor_scores.masked_fill(is_padding, 0.0)
+        alpha = F.softmax(safe_scores / self.tau, dim=1)
+        alpha = alpha.masked_fill(is_padding, 0.0)  # zero out padding contributions
+
         embeds = self.polarity_embedding(neighbor_polarities)
-        alpha = F.softmax(neighbor_scores / self.tau, dim=1)
         label_repr = (alpha.unsqueeze(-1) * embeds).sum(dim=1)
+
+        # Zero out rows with no real neighbors
+        label_repr = label_repr.masked_fill(all_padding.unsqueeze(-1), 0.0)
         return label_repr

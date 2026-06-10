@@ -1,6 +1,6 @@
 # Project Status — Retrieval-ABSA
 
-**Last updated:** 2026-06-10 (Phase B Hierarchical code complete — 175/175 tests pass, smoke test OK. Ready for Kaggle training)
+**Last updated:** 2026-06-10 (Phase 2a code complete — LearnableRetriever (W matrix), dataset/model/trainer/script changes, 197/197 tests pass. Ready for NB2 v3 on Kaggle)
 
 ---
 
@@ -144,14 +144,24 @@ Attribute loss only computed for samples where gold entity is active.
 | `configs/stage1_hierarchical.yaml` | `use_hierarchical: true`, encoder_lr=1e-5, head_lr=5e-4, 30 epochs |
 | Tests | 14 new tests (model/trainer/builder/dataset), 175/175 pass |
 
-### Status
+### NB1 v7 Training Results (2026-06-10)
 
-- [x] Code complete — all files implemented
-- [x] Data regenerated — `category_detection.jsonl` has hierarchical fields
-- [x] Tests — 175/175 pass
-- [x] Smoke test — `--limit 16 --epochs 1` OK
-- [ ] **NB1 v7:** Train on Kaggle T4, 30 epochs
-- [ ] **NB3 v5:** Eval hierarchical vs Cat-Aware R5 baseline
+| Epoch | Loss | Cat F1 | Cat P | Cat R |
+|-------|------|--------|-------|-------|
+| 1 | 2.3715 | 0.2768 | 0.1629 | 0.9202 |
+| 14 | 0.8049 | 0.6261 | 0.5688 | 0.6962 |
+| **22** | **0.4762** | **0.7002** | **0.6640** | **0.7406** |
+| 27 | 0.3860 | 0.7002 | 0.6640 | 0.7406 |
+
+Early stopped epoch 27 (patience=5). Best val Cat F1 = **0.7002** at epoch 22.
+
+### Verdict: DROPPED
+
+- Val Cat F1=0.7002 — **4.8pp below R4** (0.7482), **2.4pp below Cat-Aware R5** (0.7243)
+- Root causes: two-stage thresholding compounds errors, attr heads data-starved (DRINKS ~77 samples), silent recall loss when entity predicted but no attr clears threshold
+- Estimated test Cat F1 ~0.67 (worse than both baselines)
+
+**Decision:** Hierarchical dropped. **Cat-Aware R5 accepted as Stage 1 FINAL** (test Cat F1=0.6962, Joint F1=0.6235).
 
 ---
 
@@ -180,10 +190,20 @@ Attribute loss only computed for samples where gold entity is active.
 - [x] **NB3 v4 done** → Cat-Aware test Cat F1=0.6962, Joint F1=0.6235 (2026-06-09)
 - [x] **Decision:** Cat-Aware accepted as baseline. Proceed to Phase B (Hierarchical)
 - [x] **Phase B code complete** (2026-06-10) — 175/175 tests, smoke test OK
-- [ ] **NB1 v7:** Train hierarchical on Kaggle T4 (30 epochs, `stage1_hierarchical.yaml`)
-- [ ] **NB3 v5:** Eval hierarchical → compare Cat F1 vs 0.6962 baseline
-- [ ] **Side fix:** Add global threshold F1 to `CategoryTrainer.evaluate()` for model selection
-- [ ] Neutral augmentation từ MAMS dataset — pending Stage 1 improvement
+- [x] **NB1 v7 done** → Hierarchical val Cat F1=0.7002, thua Cat-Aware (0.7243). **DROPPED.**
+- [x] **Decision:** Cat-Aware R5 = Stage 1 FINAL. Move to Phase 2a (learnable retriever).
+- [x] **Phase 2a code complete** (2026-06-10) — 197/197 tests, smoke test OK
+  - `src/absa/learnable_retriever.py` (NEW): W matrix + ranking loss
+  - `src/retrieval/retriever.py`: adds `faiss_idx` to results
+  - `src/absa/sentiment_dataset.py`: `query_vec`, `neighbor_vecs`, `query_polarity`; -inf padding fix
+  - `src/absa/label_interpolation.py`: handles -inf padding correctly
+  - `src/absa/sentiment_model.py`: `use_learnable_retriever` flag
+  - `src/absa/sentiment_trainer.py`: combined loss, per-class F1 logging
+  - `scripts/04b_train_stage2.py`, `scripts/05_evaluate_joint.py`: full support
+  - `configs/stage2_phase2a.yaml` (NEW), `configs/stage2_noret.yaml` fixed
+- [ ] **NB2 v3:** Train Phase 2a on Kaggle, compare ret (W) vs ret (cosine) vs no-ret
+- [ ] **NB3 v5:** Joint eval Cat-Aware R5 + Phase 2a sentiment
+- [ ] Neutral augmentation từ MAMS dataset — pending (deferred)
 
 ---
 
@@ -198,6 +218,20 @@ Attribute loss only computed for samples where gold entity is active.
 **Category mapping:** 5/8 map trực tiếp (service, ambience, miscellaneous, staff, place); 3/8 cần LLM annotate (food, price, menu).
 
 **Target:** 15–20% neutral (+240–425 samples). **Full plan:** `.claude/plans/context-after-nb2-training-curried-volcano.md`
+
+---
+
+## Phase 2a: Learnable Retrieval Alignment (Next)
+
+**Problem:** No-ret beats ret by ~1pp (Joint F1 0.6235 vs 0.6139). Frozen cosine retriever is polarity-blind.
+
+**Approach:** Replace `score(q,k) = q^T k` with `score(q,k) = q^T W k`. W is 256×256 learnable matrix (65K params). FAISS still selects candidates, W re-scores for label interpolation. Add ranking loss (same-polarity neighbors score higher).
+
+**Key changes:** New `LearnableRetriever` module, dataset returns query_vec + neighbor_vecs, combined loss = L_sentiment + 0.1 * L_rank.
+
+**Full plan:** `.claude/plans/135-0s-111-info-epoch-mighty-pebble.md`
+
+**Backup:** If W re-score insufficient, switch to full PyTorch scoring (W selects neighbors from entire corpus, bypassing FAISS).
 
 ---
 

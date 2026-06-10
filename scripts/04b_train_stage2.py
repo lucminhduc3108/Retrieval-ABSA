@@ -47,6 +47,7 @@ def main():
 
     embedding_model = None
     retriever = None
+    store_vectors = None
     if use_retrieval:
         if not args.embedding_ckpt:
             parser.error("--embedding_ckpt required when using retrieval")
@@ -58,7 +59,7 @@ def main():
         embedding_model.eval()
         logger.info("Loaded embedding model: %s", args.embedding_ckpt)
 
-        index, metadata, _ = load_index(args.index_dir)
+        index, metadata, store_vectors = load_index(args.index_dir)
         retriever = Retriever(index, metadata,
                               top_k=ret_cfg["top_k"],
                               threshold=ret_cfg["threshold"])
@@ -97,6 +98,7 @@ def main():
         retriever=retriever,
         tokenizer_name=cfg["model_name"],
         embedding_model=embedding_model,
+        store_vectors=store_vectors if use_retrieval else None,
         max_length=cfg["max_seq_length"],
         top_k=ret_cfg.get("top_k", 0) if use_retrieval else 0,
         device=device,
@@ -118,6 +120,7 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=cfg["batch_size"], shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=cfg["batch_size"])
 
+    use_learnable_retriever = cfg.get("use_learnable_retriever", False)
     model = SentimentPredictor(
         model_name=cfg["model_name"],
         num_sent_labels=cfg["num_sent_labels"],
@@ -125,11 +128,13 @@ def main():
         tau=cfg.get("tau", 0.05),
         dropout=cfg.get("dropout", 0.1),
         use_retrieval=use_retrieval,
+        use_learnable_retriever=use_learnable_retriever,
         class_weights=class_weights_tensor,
     ).to(device)
 
     encoder_lr = cfg.get("encoder_lr", cfg.get("lr", 2e-5))
     head_lr = cfg.get("head_lr", cfg.get("lr", 2e-4))
+    retriever_lr = cfg.get("retriever_lr", head_lr)
     param_groups = [
         {"params": list(model.encoder.parameters()), "lr": encoder_lr},
         {"params": list(model.sentiment_head.parameters()), "lr": head_lr},
@@ -137,6 +142,9 @@ def main():
     if model.label_interp is not None:
         param_groups.append(
             {"params": list(model.label_interp.parameters()), "lr": head_lr})
+    if model.learnable_retriever is not None:
+        param_groups.append(
+            {"params": list(model.learnable_retriever.parameters()), "lr": retriever_lr})
     optimizer = torch.optim.AdamW(param_groups, weight_decay=cfg["weight_decay"])
 
     epochs = args.epochs if args.epochs else cfg["epochs"]
@@ -151,6 +159,7 @@ def main():
         grad_clip=cfg["grad_clip"], log_path=cfg["log_path"],
         use_fp16=device == "cuda",
         grad_accum_steps=grad_accum,
+        lambda_rank=cfg.get("lambda_rank", 0.1),
     )
 
     ckpt_path = args.ckpt_path or os.path.join(cfg["ckpt_dir"], "best.pt")

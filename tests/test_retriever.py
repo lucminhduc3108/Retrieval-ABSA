@@ -62,3 +62,21 @@ def test_exclude_sentence_backward_compatible_with_query_id():
     r = _setup()
     out = r.retrieve(np.eye(4, dtype="float32")[0:1], query_id="r0")
     assert "r0" not in [m["id"] for m in out]
+
+
+def test_results_include_faiss_idx():
+    r = _setup()
+    out = r.retrieve(np.eye(4, dtype="float32")[0:1], query_id=None)
+    assert "faiss_idx" in out[0]
+
+
+def test_faiss_idx_is_valid_index_into_store():
+    v = np.eye(4, dtype="float32")
+    meta = [{"id": f"r{i}", "sentence": f"s{i}"} for i in range(4)]
+    r = Retriever(build_index(v), meta, top_k=3)
+    out = r.retrieve(v[0:1], query_id=None)
+    for m in out:
+        idx = m["faiss_idx"]
+        assert 0 <= idx < 4
+        # faiss_idx should match the original row in v
+        assert meta[idx]["id"] == m["id"]

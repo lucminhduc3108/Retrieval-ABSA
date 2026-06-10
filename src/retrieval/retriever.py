@@ -31,7 +31,7 @@ class Retriever:
                 continue
             if exclude_sentence is not None and meta.get("sentence") == exclude_sentence:
                 continue
-            results.append({**meta, "score": float(score)})
+            results.append({**meta, "score": float(score), "faiss_idx": int(idx)})
             if len(results) >= self.top_k:
                 break
         return results

@@ -66,7 +66,8 @@ def test_padded_neighbors_when_no_retriever():
                           top_k=3, max_length=64)
     item = ds[0]
     assert item["neighbor_polarities"].shape == (3,)
-    assert (item["neighbor_scores"] == 0.0).all()
+    # Padding uses -inf so softmax assigns zero weight
+    assert torch.all(torch.isinf(item["neighbor_scores"]) & (item["neighbor_scores"] < 0))
 
 
 def test_no_retrieval_keys_when_disabled():
@@ -74,3 +75,50 @@ def test_no_retrieval_keys_when_disabled():
     item = ds[0]
     assert "neighbor_polarities" not in item
     assert "neighbor_scores" not in item
+
+
+def test_query_polarity_present_when_retrieval_enabled():
+    ds = SentimentDataset(SAMPLE_RECORDS, use_retrieval=True, top_k=2, max_length=64)
+    item0 = ds[0]
+    item1 = ds[1]
+    assert "query_polarity" in item0
+    assert item0["query_polarity"].item() == POL2ID["positive"]
+    assert item1["query_polarity"].item() == POL2ID["negative"]
+
+
+def test_query_polarity_absent_when_retrieval_disabled():
+    ds = SentimentDataset(SAMPLE_RECORDS, use_retrieval=False)
+    assert "query_polarity" not in ds[0]
+
+
+def test_query_vec_shape_when_retrieval_enabled():
+    ds = SentimentDataset(SAMPLE_RECORDS, use_retrieval=True, top_k=2, max_length=64)
+    item = ds[0]
+    assert "query_vec" in item
+    assert item["query_vec"].shape == (256,)
+    assert item["query_vec"].dtype == torch.float32
+
+
+def test_neighbor_vecs_shape_when_retrieval_enabled():
+    ds = SentimentDataset(SAMPLE_RECORDS, use_retrieval=True, top_k=2, max_length=64)
+    item = ds[0]
+    assert "neighbor_vecs" in item
+    assert item["neighbor_vecs"].shape == (2, 256)
+    assert item["neighbor_vecs"].dtype == torch.float32
+
+
+def test_neighbor_vecs_use_store_vectors():
+    import numpy as np
+    store = np.random.randn(10, 256).astype("float32")
+    ds = SentimentDataset(SAMPLE_RECORDS, use_retrieval=True,
+                          top_k=2, max_length=64, store_vectors=store)
+    item = ds[0]
+    assert item["neighbor_vecs"].shape == (2, 256)
+
+
+def test_new_retrieval_fields_absent_when_retrieval_disabled():
+    ds = SentimentDataset(SAMPLE_RECORDS, use_retrieval=False)
+    item = ds[0]
+    assert "query_vec" not in item
+    assert "neighbor_vecs" not in item
+    assert "query_polarity" not in item

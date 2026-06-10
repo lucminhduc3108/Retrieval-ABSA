@@ -97,11 +97,12 @@ def decode_categories(logits, strategy, val_logits, val_labels):
 
 def predict_sentiment(model, records, retriever, embedding_model,
                       tokenizer_name, max_length, top_k, device,
-                      use_retrieval, batch_size=16):
+                      use_retrieval, store_vectors=None, batch_size=16):
     ds = SentimentDataset(
         records, retriever=retriever,
         tokenizer_name=tokenizer_name,
         embedding_model=embedding_model,
+        store_vectors=store_vectors,
         max_length=max_length,
         top_k=top_k, device="cpu",
         use_retrieval=use_retrieval,
@@ -118,6 +119,9 @@ def predict_sentiment(model, records, retriever, embedding_model,
                 attention_mask=batch_gpu["attention_mask"],
                 neighbor_polarities=batch_gpu.get("neighbor_polarities"),
                 neighbor_scores=batch_gpu.get("neighbor_scores"),
+                query_vec=batch_gpu.get("query_vec"),
+                neighbor_vecs=batch_gpu.get("neighbor_vecs"),
+                query_polarity=batch_gpu.get("query_polarity"),
             )
             preds = out["logits"].argmax(dim=-1).cpu().tolist()
             all_preds.extend(preds)
@@ -146,8 +150,8 @@ def build_gold_pairs(cat_records, sent_records):
 
 
 def run_joint_eval(pred_cats_list, test_cat, gold_cats_list, gold_pairs_list,
-                   s2_model, retriever, embedding_model, s2_cfg, ret_cfg,
-                   use_retrieval, device):
+                   s2_model, retriever, embedding_model, store_vectors,
+                   s2_cfg, ret_cfg, use_retrieval, device):
     stage2_records = []
     for cr, pred_cats in zip(test_cat, pred_cats_list):
         for cat in sorted(pred_cats):
@@ -166,6 +170,7 @@ def run_joint_eval(pred_cats_list, test_cat, gold_cats_list, gold_pairs_list,
             max_length=s2_cfg["max_seq_length"],
             top_k=ret_cfg.get("top_k", 0) if use_retrieval else 0,
             device=device, use_retrieval=use_retrieval,
+            store_vectors=store_vectors,
         )
         for rec, pred_idx in zip(stage2_records, sent_preds):
             rec["predicted_polarity"] = ID2POL[pred_idx]
@@ -335,6 +340,7 @@ def main():
     # --- Load Stage 2 + retrieval ---
     embedding_model = None
     retriever = None
+    store_vectors = None
     if use_retrieval:
         if not args.embedding_ckpt:
             parser.error("--embedding_ckpt required for retrieval")
@@ -345,7 +351,7 @@ def main():
         embedding_model.eval()
         logger.info("Loaded embedding model")
 
-        index, metadata, _ = load_index(args.index_dir)
+        index, metadata, store_vectors = load_index(args.index_dir)
         retriever = Retriever(index, metadata,
                               top_k=ret_cfg["top_k"],
                               threshold=ret_cfg["threshold"])
@@ -358,6 +364,7 @@ def main():
         tau=s2_cfg.get("tau", 0.05),
         dropout=s2_cfg.get("dropout", 0.1),
         use_retrieval=use_retrieval,
+        use_learnable_retriever=s2_cfg.get("use_learnable_retriever", False),
     ).to(device)
     s2_state = torch.load(args.stage2_ckpt, map_location=device)
     s2_model.load_state_dict(s2_state, strict=False)
@@ -416,8 +423,8 @@ def main():
 
         cat_m, joint_m, sent_cond, per_cat = run_joint_eval(
             pred_cats, test_cat, gold_cats_list, gold_pairs_list,
-            s2_model, retriever, embedding_model, s2_cfg, ret_cfg,
-            use_retrieval, device)
+            s2_model, retriever, embedding_model, store_vectors,
+            s2_cfg, ret_cfg, use_retrieval, device)
 
         all_results[strat] = {
             "cat_f1": cat_m["f1"], "cat_p": cat_m["precision"], "cat_r": cat_m["recall"],
