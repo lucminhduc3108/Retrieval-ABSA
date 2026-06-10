@@ -54,7 +54,7 @@ def main():
         metadata.append({
             "id": r["id"],
             "sentence": r["sentence"],
-            "aspect_category": r["aspect_category"],
+            "aspect_category": r.get("aspect_category", r.get("category")),
             "polarity": r["polarity"],
             "tokens": bio_info.get("tokens"),
             "bio_tags": bio_info.get("bio_tags"),
