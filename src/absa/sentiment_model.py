@@ -12,7 +12,9 @@ class SentimentPredictor(nn.Module):
                  embed_dim: int = 64, tau: float = 0.05,
                  dropout: float = 0.1, use_retrieval: bool = True,
                  use_learnable_retriever: bool = False,
-                 class_weights: torch.Tensor | None = None):
+                 class_weights: torch.Tensor | None = None,
+                 margin: float = 0.1, w_mode: str = "full",
+                 w_rank: int = 16):
         super().__init__()
         self.encoder = AutoModel.from_pretrained(model_name, dtype=torch.float32)
         hidden = self.encoder.config.hidden_size
@@ -22,7 +24,8 @@ class SentimentPredictor(nn.Module):
             if use_learnable_retriever:
                 self.learnable_retriever = LearnableRetriever(
                     vec_dim=256, num_labels=num_sent_labels,
-                    embed_dim=embed_dim, tau=tau)
+                    embed_dim=embed_dim, tau=tau,
+                    margin=margin, w_mode=w_mode, w_rank=w_rank)
                 self.label_interp = None
             else:
                 self.label_interp = LabelInterpolation(
@@ -58,7 +61,8 @@ class SentimentPredictor(nn.Module):
                         query_vec, neighbor_vecs, neighbor_polarities)
                     if query_polarity is not None:
                         ranking_loss = self.learnable_retriever.ranking_loss(
-                            scores, neighbor_polarities, query_polarity)
+                            scores, neighbor_polarities, query_polarity,
+                            neighbor_vecs=neighbor_vecs)
                 else:
                     label_repr = torch.zeros(
                         cls_output.size(0), self.learnable_retriever.embed_dim,

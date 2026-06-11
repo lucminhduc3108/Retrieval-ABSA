@@ -121,6 +121,9 @@ def main():
     val_loader = DataLoader(val_ds, batch_size=cfg["batch_size"])
 
     use_learnable_retriever = cfg.get("use_learnable_retriever", False)
+    rank_margin = cfg.get("rank_margin", 0.1)
+    w_mode = cfg.get("w_mode", "full")
+    w_rank = cfg.get("w_rank", 16)
     model = SentimentPredictor(
         model_name=cfg["model_name"],
         num_sent_labels=cfg["num_sent_labels"],
@@ -130,6 +133,9 @@ def main():
         use_retrieval=use_retrieval,
         use_learnable_retriever=use_learnable_retriever,
         class_weights=class_weights_tensor,
+        margin=rank_margin,
+        w_mode=w_mode,
+        w_rank=w_rank,
     ).to(device)
 
     encoder_lr = cfg.get("encoder_lr", cfg.get("lr", 2e-5))

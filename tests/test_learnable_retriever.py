@@ -112,3 +112,72 @@ def test_tau_affects_alpha_concentration():
     repr_flat, _ = lr_flat(qv, nv, np_)
     # Sharp tau concentrates mass → different output from flat tau
     assert not torch.allclose(repr_sharp, repr_flat, atol=1e-3)
+
+
+def test_diagonal_mode_output_shapes():
+    lr = LearnableRetriever(w_mode="diagonal")
+    qv, nv, np_, _ = _make_inputs()
+    label_repr, scores = lr(qv, nv, np_)
+    assert label_repr.shape == (2, 64)
+    assert scores.shape == (2, 2)
+
+
+def test_diagonal_mode_gradient_flows():
+    lr = LearnableRetriever(w_mode="diagonal")
+    qv, nv, np_, _ = _make_inputs()
+    label_repr, scores = lr(qv, nv, np_)
+    (label_repr.sum() + scores.sum()).backward()
+    assert lr.W_diag.grad is not None
+    assert lr.polarity_embedding.weight.grad is not None
+
+
+def test_low_rank_mode_output_shapes():
+    lr = LearnableRetriever(w_mode="low_rank", w_rank=8)
+    qv, nv, np_, _ = _make_inputs()
+    label_repr, scores = lr(qv, nv, np_)
+    assert label_repr.shape == (2, 64)
+    assert scores.shape == (2, 2)
+
+
+def test_low_rank_mode_gradient_flows():
+    lr = LearnableRetriever(w_mode="low_rank", w_rank=8)
+    qv, nv, np_, _ = _make_inputs()
+    label_repr, scores = lr(qv, nv, np_)
+    (label_repr.sum() + scores.sum()).backward()
+    assert lr.W_A.grad is not None
+    assert lr.W_B.grad is not None
+
+
+def test_padding_gets_zero_weight():
+    lr = LearnableRetriever()
+    qv = F.normalize(torch.randn(1, 256), dim=-1)
+    nv = torch.zeros(1, 2, 256)
+    nv[0, 0] = F.normalize(torch.randn(1, 256), dim=-1)  # real neighbor
+    # nv[0, 1] stays zero → padding
+    np_ = torch.tensor([[0, 1]])
+    label_repr, scores = lr(qv, nv, np_)
+    # Padded neighbor should have -inf score
+    assert scores[0, 1].item() == float("-inf")
+    # label_repr should only reflect the real neighbor's polarity
+    assert not torch.isnan(label_repr).any()
+
+
+def test_ranking_loss_ignores_padding():
+    lr = LearnableRetriever(margin=0.1)
+    B, K = 1, 3
+    query_polarity = torch.tensor([1])  # negative
+    # neighbor 0: same polarity (1), neighbor 1: diff (0), neighbor 2: padding
+    neighbor_polarities = torch.tensor([[1, 0, 0]])
+    scores = torch.tensor([[0.5, 0.2, 0.0]])
+    # neighbor_vecs: first two real, third is zero (padding)
+    nv = torch.randn(1, 3, 256)
+    nv[0, 2] = 0.0  # padding
+
+    loss_with_pad = lr.ranking_loss(scores, neighbor_polarities,
+                                    query_polarity, neighbor_vecs=nv)
+    # Without padding info, neighbor 2 (polarity=0, score=0.0) would count as
+    # diff-polarity and increase best_diff. With padding masked, it's excluded.
+    loss_without = lr.ranking_loss(scores[:, :2],
+                                   neighbor_polarities[:, :2],
+                                   query_polarity)
+    assert torch.allclose(loss_with_pad, loss_without, atol=1e-6)

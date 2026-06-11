@@ -365,6 +365,9 @@ def main():
         dropout=s2_cfg.get("dropout", 0.1),
         use_retrieval=use_retrieval,
         use_learnable_retriever=s2_cfg.get("use_learnable_retriever", False),
+        margin=s2_cfg.get("rank_margin", 0.1),
+        w_mode=s2_cfg.get("w_mode", "full"),
+        w_rank=s2_cfg.get("w_rank", 16),
     ).to(device)
     s2_state = torch.load(args.stage2_ckpt, map_location=device)
     s2_model.load_state_dict(s2_state, strict=False)
