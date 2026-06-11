@@ -88,4 +88,4 @@ def augment_neutral(target_samples=650):
     print(f"Successfully saved {len(records)} records (+{len(sampled)} from MAMS) to {OUTPUT_JSONL}")
 
 if __name__ == "__main__":
-    augment_neutral(650)
+    augment_neutral(150)
