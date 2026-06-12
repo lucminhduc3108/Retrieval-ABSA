@@ -4,7 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project snapshot
 
-Pipeline: contrastive DeBERTa embedding → FAISS index → multi-task retrieval-ABSA (BIO tagging + sentiment classification) on **SemEval 2016 Restaurant only** (SB1). **Status: Phase 3 (retrieval improvements)** — Phase 2 complete, CRF dropped, now tuning retrieval (embedding hyperparams + hard negatives). Live status tracked in `context/STATUS.md`.
+**Retrieval-based ABSA** on SemEval 2016 Restaurant (SB1).  
+**Pipeline:** Two-stage — Category Detection (Stage 1) then Sentiment Classification (Stage 2).  
+**Goal:** Improve retrieval-augmented sentiment (Phase 2a) to beat the no-retrieval baseline.  
+Live status tracked in `context/STATUS.md`.
+
+## Pipeline (5 steps)
+
+1. **Data Preparation & Augmentation:** Parse SemEval 2016 XML → sentence-level (category, polarity) pairs. Drop `conflict`. Augment neutral from MAMS-ACSA (~20% neutral in train).
+2. **Retrieval Engine (reused, supports Stage 2 retrieval only):** ContrastiveEmbedder (DeBERTa, InfoNCE) → 256-dim vectors → FAISS IndexFlatIP. Not needed for no-retrieval strategy.
+3. **Stage 1 — Category Detection:** DeBERTa + Cat-Aware Attention (12 learnable queries + MHA) → 12 sigmoid (BCE loss with sqrt pos_weight). Global threshold tuned on val. **FINAL: Cat-Aware R5.**
+4. **Stage 2 — Sentiment Classification:** Per detected category, predict positive/negative/neutral. Two strategies compared:
+   - **No-Retrieval (baseline):** DeBERTa → MLP(768→256→3). Currently leading.
+   - **Phase 2a (Label Interpolation):** FAISS top-k → Diagonal W alignment → polarity embedding interpolation → MLP(832→256→3) + ranking loss.
+5. **Evaluation (end-to-end):** Stage 1 predicts categories → Stage 2 predicts sentiment per category. Metrics: Category F1, Sentiment Acc|Correct Category, Joint F1 (cat+pol).
 
 ## Commands
 
@@ -38,25 +51,14 @@ python scripts/05_evaluate.py --config configs/absa.yaml \
 python scripts/analyze_duplicates.py  # data duplication analysis
 ```
 
-## Architecture
-
-Three phases that are intentionally separate (don't merge their backbones in MVP):
-
-1. **Contrastive embedding** (`src/embedding/`): `ContrastiveEmbedder` = DeBERTa-v3-base + `Linear(768,256)→GELU→LayerNorm` projection, trained with symmetric InfoNCE in-batch loss (`tau=0.07`). Output: L2-normed 256-dim vectors. Validated by Recall@{1,3,5}.
-
-2. **Retrieval index** (`src/retrieval/`): `encode_records` builds `faiss.IndexFlatIP` from train-split. Persists `train.faiss` + `train_metadata.jsonl` (containing `tokens`, `bio_tags`, `aspect_category`, `polarity` per record) + `train_vectors.npy`. `Retriever.retrieve(query_vec, query_id)` does self-exclusion at query time so the ABSA dataset gets clean neighbors.
-
-3. **Multi-task ABSA** (`src/absa/`): separate DeBERTa backbone. Input = `[CLS] query [SEP] query_aspect [SEP] ret1_sent [ASP] ret1_asp [POL] ret1_pol [SEP] ...`. BIO head `Linear(768,3)` + optional CRF layer (`use_crf=true` in config) + sentiment head `Dropout→Linear(768,3)` on `[CLS]`. Loss = `L_bio + 0.5 * L_cls`. Metrics in `src/evaluation/metrics.py` (token F1, span F1, sentiment acc/macro-F1, joint F1).
-
 ## Non-obvious correctness invariants
 
 These are **not optimizations** — violating any of them silently breaks the model:
 
 - **Retriever self-exclusion is mandatory.** At train time the query is already in the index; without `query_id` exclusion the top-1 result is always the query itself. `Retriever.retrieve(query_vec, query_id=record["id"])` — never pass `None` at train time.
-- **BIO labels must be `-100` for all non-query tokens.** `RetrievalABSADataset` sets `bio_labels = -100` for every token in the retrieved portion, plus `[CLS]`, `[SEP]`, aspect tokens, and padding. BIO CE loss uses `ignore_index=-100`. Only query sentence tokens carry real BIO labels.
-- **Query is never truncated first.** Token budget: query ≤ `query_budget=100`, remaining split evenly across `top_k` retrieved items. If query exceeds 100 tokens, shrink retrieved budget and log a warning — do NOT shorten the query.
-- **Aspect category = full Category#Attribute.** Giữ nguyên `FOOD#QUALITY`, `SERVICE#GENERAL`, v.v. Không rút gọn thành coarse prefix.
-- **Drop `conflict` polarity at parse time; drop `target="NULL"` from BIO only.** NULL opinions still go into classification + contrastive builders. 3-class polarity: `positive / negative / neutral`.
+- **Aspect category = full Category#Attribute.** Keep `FOOD#QUALITY`, `SERVICE#GENERAL`, etc. Do not reduce to coarse prefix.
+- **Drop `conflict` polarity at parse time.** 3-class polarity: `positive / negative / neutral`.
+- **Label Interpolation Padding:** Padded neighbors MUST be masked with `-inf` to avoid padding bias towards positive polarity.
 
 ## SemEval XML paths
 
@@ -74,6 +76,6 @@ Stats: Train 2,000 sentences / 2,507 opinions, Test 676 sentences / 859 opinions
 - **SemEval-Dataset/** has its own nested `.git/` — leave it alone; gitignore it or reference its XMLs read-only.
 - **Windows bash shell.** Use `.venv/Scripts/activate` (not `bin/`). Quote paths containing spaces.
 - **Language convention:** prose in Vietnamese, code / identifiers / commit messages in English.
-- **Improvement scope.** Follow `IMPROVE.md` for current improvement plan. Phase 3 code complete: retrieval hyperparams (tau/top_k/threshold), hard negative mining. CRF dropped (tested, worse than CE). Features still deferred: differential LR, E2E fine-tune.
 - **SemEval 2016 only.** SemEval 2015 dropped — its train+test is a subset of 2016 train, causing massive dedup loss and 1:1 train/test ratio. Using 2016 alone gives 2,507 train opinions, 0.1% leakage, 3:1 ratio.
 - **SB2 is unusable.** SB2 files have review-level opinions (no target, no char offset) — completely different task from sentence-level ABSA.
+- **Training on Kaggle.** All GPU training runs on Kaggle T4. Local machine is Windows 11 with no GPU — code/test only.

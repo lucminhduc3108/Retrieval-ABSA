@@ -1,15 +1,13 @@
 {
-  "id": "lcminhc/p5-nb2-stage2-train",
-  "title": "P5 NB2 Stage2 Train",
-  "code_file": "p5_nb2_stage2.ipynb",
+  "id": "lcminhc/p5-nb-embed-v4-train",
+  "title": "P5 NB Embed V4 Train",
+  "code_file": "p5_nb_embed_v4.ipynb",
   "language": "python",
   "kernel_type": "notebook",
   "is_private": true,
   "enable_gpu": true,
   "enable_internet": true,
   "dataset_sources": [
-    "lcminhc/p5-nb1-stage1",
-    "lcminhc/p3s2-embedding-flat",
     "lcminhc/semeval-absa-restaurant"
   ],
   "competition_sources": [],
