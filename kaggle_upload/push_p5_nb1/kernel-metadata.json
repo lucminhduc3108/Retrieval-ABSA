@@ -8,7 +8,7 @@
   "enable_gpu": true,
   "enable_internet": true,
   "dataset_sources": [
-    "lcminhc/semeval-absa-restaurant"
+    "lcminhc/semeval-2014-absa-restaurant"
   ],
   "competition_sources": [],
   "kernel_sources": []
