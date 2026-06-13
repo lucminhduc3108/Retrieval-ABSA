@@ -29,6 +29,7 @@ def test_dataset_item_has_expected_keys(tmp_path):
     item = ds[0]
     assert set(item.keys()) == {
         "anchor_input_ids", "anchor_attention_mask",
+        "anchor_polarity_id",
         "pos_input_ids", "pos_attention_mask",
         "neg1_input_ids", "neg1_attention_mask",
         "neg2_input_ids", "neg2_attention_mask",
@@ -159,3 +160,67 @@ def test_trainer_with_grad_accum(tmp_path):
                                  grad_accum_steps=2)
     result = trainer.evaluate_recall(loader, k_list=(1, 3))
     assert "recall@1" in result
+
+
+def test_dataset_item_includes_anchor_polarity_id(tmp_path):
+    p = tmp_path / "triplets.jsonl"
+    write_jsonl([_make_triplet(0)], str(p))
+    tok = AutoTokenizer.from_pretrained("microsoft/deberta-v3-base")
+    ds = ContrastiveTripletDataset(str(p), tok, max_length=32)
+    item = ds[0]
+    assert "anchor_polarity_id" in item
+    assert item["anchor_polarity_id"].item() == 0  # "positive" → 0
+
+
+def test_trainer_with_cls_polarity_logs_cls_acc(tmp_path):
+    torch.manual_seed(0)
+    p = tmp_path / "triplets.jsonl"
+    write_jsonl([_make_triplet(i) for i in range(4)], str(p))
+    tok = AutoTokenizer.from_pretrained("microsoft/deberta-v3-base")
+    ds = ContrastiveTripletDataset(str(p), tok, max_length=32)
+    loader = torch.utils.data.DataLoader(ds, batch_size=2)
+
+    model = ContrastiveEmbedder(proj_dim=32, num_polarities=3)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    trainer = ContrastiveTrainer(model, optimizer, scheduler=None,
+                                 tau=0.07, device="cpu", log_path="",
+                                 cls_polarity_weight=1.0)
+    history = trainer.train(loader, loader, epochs=1, patience=5)
+    assert "cls_acc" in history[0]
+    assert "loss_cls" in history[0]
+
+
+def test_trainer_without_cls_head_backward_compat(tmp_path):
+    torch.manual_seed(0)
+    p = tmp_path / "triplets.jsonl"
+    write_jsonl([_make_triplet(i) for i in range(4)], str(p))
+    tok = AutoTokenizer.from_pretrained("microsoft/deberta-v3-base")
+    ds = ContrastiveTripletDataset(str(p), tok, max_length=32)
+    loader = torch.utils.data.DataLoader(ds, batch_size=2)
+
+    model = ContrastiveEmbedder(proj_dim=32, num_polarities=0)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    trainer = ContrastiveTrainer(model, optimizer, scheduler=None,
+                                 tau=0.07, device="cpu", log_path="",
+                                 cls_polarity_weight=0.0)
+    history = trainer.train(loader, loader, epochs=1, patience=5)
+    assert "cls_acc" not in history[0]
+    assert len(history) == 1
+
+
+def test_trainer_with_proj_polarity_logs_proj_cls_acc(tmp_path):
+    torch.manual_seed(0)
+    p = tmp_path / "triplets.jsonl"
+    write_jsonl([_make_triplet(i) for i in range(4)], str(p))
+    tok = AutoTokenizer.from_pretrained("microsoft/deberta-v3-base")
+    ds = ContrastiveTripletDataset(str(p), tok, max_length=32)
+    loader = torch.utils.data.DataLoader(ds, batch_size=2)
+
+    model = ContrastiveEmbedder(proj_dim=32, num_polarities=3, proj_num_polarities=3)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    trainer = ContrastiveTrainer(model, optimizer, scheduler=None,
+                                 tau=0.07, device="cpu", log_path="",
+                                 cls_polarity_weight=1.0, proj_polarity_weight=0.5)
+    history = trainer.train(loader, loader, epochs=1, patience=5)
+    assert "proj_cls_acc" in history[0]
+    assert "loss_proj" in history[0]

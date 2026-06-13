@@ -46,6 +46,8 @@ class SentimentTrainer:
                 neighbor_vecs=batch.get("neighbor_vecs"),
                 query_polarity=batch.get("query_polarity"),
                 sentiment_label=batch["sentiment_label"],
+                embed_input_ids=batch.get("embed_input_ids"),
+                embed_attention_mask=batch.get("embed_attention_mask"),
             )
         # Combined loss: sentiment + lambda_rank * ranking
         ranking_loss = out.get("ranking_loss")
@@ -117,6 +119,12 @@ class SentimentTrainer:
                     Path(ckpt_path).parent.mkdir(parents=True, exist_ok=True)
                     torch.save(self.model.state_dict(), ckpt_path)
                     logger.info("Saved best model (macro_f1=%.4f)", best_f1)
+                    if (hasattr(self.model, "embedding_model")
+                            and self.model.embedding_model is not None):
+                        emb_path = ckpt_path.replace(".pt", "_embedding.pt")
+                        torch.save(
+                            self.model.embedding_model.state_dict(), emb_path)
+                        logger.info("Saved embedding: %s", emb_path)
             else:
                 patience_counter += 1
                 if patience_counter >= self.patience:

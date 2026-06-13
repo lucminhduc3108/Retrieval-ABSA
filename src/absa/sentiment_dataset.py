@@ -18,7 +18,8 @@ class SentimentDataset(Dataset):
                  embedding_model=None,
                  store_vectors: "np.ndarray | None" = None,
                  max_length: int = 256, top_k: int = 2,
-                 device: str = "cpu", use_retrieval: bool = True):
+                 device: str = "cpu", use_retrieval: bool = True,
+                 joint_training: bool = False):
         self.records = records
         self.retriever = retriever
         self.embedding_model = embedding_model
@@ -28,6 +29,7 @@ class SentimentDataset(Dataset):
         self.top_k = top_k
         self.device = device
         self.use_retrieval = use_retrieval
+        self.joint_training = joint_training
 
     def __len__(self):
         return len(self.records)
@@ -133,5 +135,14 @@ class SentimentDataset(Dataset):
                 nb_vecs.append(np.zeros(_VEC_DIM, dtype="float32"))
             result["neighbor_vecs"] = torch.tensor(
                 np.stack(nb_vecs[:self.top_k]), dtype=torch.float32)
+
+            if self.joint_training:
+                embed_enc = self.tokenizer(
+                    sentence, category,
+                    max_length=128, padding="max_length",
+                    truncation=True, return_tensors="pt",
+                )
+                result["embed_input_ids"] = embed_enc["input_ids"].squeeze(0)
+                result["embed_attention_mask"] = embed_enc["attention_mask"].squeeze(0)
 
         return result

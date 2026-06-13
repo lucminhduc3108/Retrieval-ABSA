@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from torch.amp import GradScaler, autocast
 from torch.nn.utils import clip_grad_norm_
 
@@ -15,7 +16,8 @@ class ContrastiveTrainer:
     def __init__(self, model, optimizer, scheduler, tau, device,
                  log_path, grad_clip=1.0, use_fp16=False,
                  grad_accum_steps=1,
-                 loss_mode="combined", loss_alpha=1.0, loss_beta=1.0):
+                 loss_mode="combined", loss_alpha=1.0, loss_beta=1.0,
+                 cls_polarity_weight=0.0, proj_polarity_weight=0.0):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -27,6 +29,8 @@ class ContrastiveTrainer:
         self.loss_mode = loss_mode
         self.loss_alpha = loss_alpha
         self.loss_beta = loss_beta
+        self.cls_polarity_weight = cls_polarity_weight
+        self.proj_polarity_weight = proj_polarity_weight
         self.use_fp16 = use_fp16 and device == "cuda"
         self.scaler = GradScaler("cuda") if self.use_fp16 else None
         if self.use_fp16:
@@ -36,6 +40,10 @@ class ContrastiveTrainer:
         if self.loss_mode == "split":
             logger.info("Split loss: alpha=%.2f (polarity), beta=%.2f (category)",
                         self.loss_alpha, self.loss_beta)
+        if self.cls_polarity_weight > 0:
+            logger.info("CLS polarity head weight: %.2f", self.cls_polarity_weight)
+        if self.proj_polarity_weight > 0:
+            logger.info("Proj polarity head weight: %.2f", self.proj_polarity_weight)
 
     def _run_batch(self, batch):
         keys = ["anchor_input_ids", "anchor_attention_mask",
@@ -44,6 +52,9 @@ class ContrastiveTrainer:
         has_neg2 = "neg2_input_ids" in batch
         if has_neg2:
             keys += ["neg2_input_ids", "neg2_attention_mask"]
+        has_polarity = "anchor_polarity_id" in batch
+        if has_polarity:
+            keys.append("anchor_polarity_id")
         batch = {k: batch[k].to(self.device) for k in keys}
         with autocast("cuda", enabled=self.use_fp16):
             out = self.model(
@@ -71,7 +82,21 @@ class ContrastiveTrainer:
                                     negatives=negatives if negatives else None,
                                     tau=self.tau)
                 loss_pol = loss_cat = None
-        return loss, out, loss_pol, loss_cat
+
+            loss_cls = loss_proj = None
+            cls_correct = proj_correct = 0
+            polarity_ids = batch.get("anchor_polarity_id")
+            if polarity_ids is not None:
+                if out.get("cls_logits") is not None and self.cls_polarity_weight > 0:
+                    loss_cls = F.cross_entropy(out["cls_logits"], polarity_ids)
+                    loss = loss + self.cls_polarity_weight * loss_cls
+                    cls_correct = (out["cls_logits"].argmax(dim=1) == polarity_ids).sum().item()
+                if out.get("proj_logits") is not None and self.proj_polarity_weight > 0:
+                    loss_proj = F.cross_entropy(out["proj_logits"], polarity_ids)
+                    loss = loss + self.proj_polarity_weight * loss_proj
+                    proj_correct = (out["proj_logits"].argmax(dim=1) == polarity_ids).sum().item()
+
+        return loss, out, loss_pol, loss_cat, loss_cls, loss_proj, cls_correct, proj_correct
 
     def train(self, train_loader, val_loader, epochs, patience=3,
               ckpt_path=None) -> list[dict]:
@@ -84,12 +109,19 @@ class ContrastiveTrainer:
             total_loss = 0
             total_loss_pol = 0.0
             total_loss_cat = 0.0
+            total_loss_cls = 0.0
+            total_loss_proj = 0.0
+            total_cls_correct = 0
+            total_proj_correct = 0
+            total_samples = 0
             self.optimizer.zero_grad()
             epoch_pos_sim = 0.0
             epoch_neg1_sim = 0.0
             epoch_neg2_sim = 0.0
             for step, batch in enumerate(train_loader):
-                loss, out, loss_pol, loss_cat = self._run_batch(batch)
+                batch_size = batch["anchor_input_ids"].size(0)
+                loss, out, loss_pol, loss_cat, loss_cls, loss_proj, cls_correct, proj_correct = self._run_batch(batch)
+                total_samples += batch_size
                 scaled_loss = loss / self.grad_accum_steps
                 if self.scaler:
                     self.scaler.scale(scaled_loss).backward()
@@ -99,6 +131,12 @@ class ContrastiveTrainer:
                 if loss_pol is not None:
                     total_loss_pol += loss_pol.item()
                     total_loss_cat += loss_cat.item()
+                if loss_cls is not None:
+                    total_loss_cls += loss_cls.item()
+                    total_cls_correct += cls_correct
+                if loss_proj is not None:
+                    total_loss_proj += loss_proj.item()
+                    total_proj_correct += proj_correct
 
                 with torch.no_grad():
                     a = out["anchor_vecs"].detach()
@@ -148,6 +186,12 @@ class ContrastiveTrainer:
             if self.loss_mode == "split":
                 record["loss_polarity"] = total_loss_pol / n_steps
                 record["loss_category"] = total_loss_cat / n_steps
+            if total_loss_cls > 0:
+                record["loss_cls"] = total_loss_cls / n_steps
+                record["cls_acc"] = total_cls_correct / total_samples if total_samples > 0 else 0.0
+            if total_loss_proj > 0:
+                record["loss_proj"] = total_loss_proj / n_steps
+                record["proj_cls_acc"] = total_proj_correct / total_samples if total_samples > 0 else 0.0
             history.append(record)
 
             if "margin_neg2" in record:

@@ -1,6 +1,7 @@
 import torch
 
 from src.absa.sentiment_model import SentimentPredictor
+from src.embedding.model import ContrastiveEmbedder
 
 
 def _make_batch(batch_size=2, seq_len=32, vocab_size=128, k=2):
@@ -122,3 +123,44 @@ def test_learnable_retriever_label_interp_mutually_exclusive():
     assert model_lr.learnable_retriever is not None
     assert model_li.learnable_retriever is None
     assert model_li.label_interp is not None
+
+
+def _make_joint_batch(batch_size=2, seq_len=32, embed_len=32,
+                      vocab_size=128, k=2, vec_dim=256):
+    batch = _make_learnable_batch(batch_size, seq_len, vocab_size, k, vec_dim)
+    batch["embed_input_ids"] = torch.randint(0, vocab_size, (batch_size, embed_len))
+    batch["embed_attention_mask"] = torch.ones(batch_size, embed_len, dtype=torch.long)
+    return batch
+
+
+def test_forward_joint_training():
+    emb = ContrastiveEmbedder(proj_dim=256)
+    model = SentimentPredictor(
+        use_retrieval=True, use_learnable_retriever=True,
+        embedding_model=emb)
+    batch = _make_joint_batch()
+    out = model(**batch)
+    assert out["logits"].shape == (2, 3)
+    assert out["loss"] is not None
+
+
+def test_gradient_flows_through_embedding_model():
+    emb = ContrastiveEmbedder(proj_dim=256)
+    model = SentimentPredictor(
+        use_retrieval=True, use_learnable_retriever=True,
+        w_mode="diagonal", embedding_model=emb)
+    batch = _make_joint_batch()
+    out = model(**batch)
+    out["loss"].backward()
+    assert emb.projection[0].weight.grad is not None
+    assert model.learnable_retriever.W_diag.grad is not None
+
+
+def test_joint_training_backward_compat():
+    model = SentimentPredictor(
+        use_retrieval=True, use_learnable_retriever=True,
+        embedding_model=None)
+    batch = _make_learnable_batch()
+    out = model(**batch)
+    assert out["logits"].shape == (2, 3)
+    assert out["loss"] is not None

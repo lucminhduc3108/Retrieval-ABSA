@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import Dataset
 
+from src.data.category_builder import POL2ID
 from src.utils.io import read_jsonl
 
 
@@ -34,6 +35,7 @@ class ContrastiveTripletDataset(Dataset):
         item = {
             "anchor_input_ids": anchor["input_ids"],
             "anchor_attention_mask": anchor["attention_mask"],
+            "anchor_polarity_id": torch.tensor(POL2ID[t["anchor_polarity"]], dtype=torch.long),
             "pos_input_ids": pos["input_ids"],
             "pos_attention_mask": pos["attention_mask"],
             "neg1_input_ids": neg1["input_ids"],

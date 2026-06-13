@@ -14,8 +14,10 @@ class SentimentPredictor(nn.Module):
                  use_learnable_retriever: bool = False,
                  class_weights: torch.Tensor | None = None,
                  margin: float = 0.1, w_mode: str = "full",
-                 w_rank: int = 16):
+                 w_rank: int = 16,
+                 embedding_model: "nn.Module | None" = None):
         super().__init__()
+        self.embedding_model = embedding_model
         self.encoder = AutoModel.from_pretrained(model_name, dtype=torch.float32)
         hidden = self.encoder.config.hidden_size
         self.use_retrieval = use_retrieval
@@ -48,9 +50,16 @@ class SentimentPredictor(nn.Module):
     def forward(self, input_ids, attention_mask,
                 neighbor_polarities=None, neighbor_scores=None,
                 query_vec=None, neighbor_vecs=None, query_polarity=None,
-                sentiment_label=None) -> dict:
+                sentiment_label=None,
+                embed_input_ids=None, embed_attention_mask=None) -> dict:
         outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
         cls_output = outputs.last_hidden_state[:, 0]
+
+        if (self.embedding_model is not None
+                and embed_input_ids is not None
+                and embed_attention_mask is not None):
+            query_vec = self.embedding_model.encode(
+                embed_input_ids, embed_attention_mask)
 
         ranking_loss = None
 

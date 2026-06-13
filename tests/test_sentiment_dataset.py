@@ -122,3 +122,21 @@ def test_new_retrieval_fields_absent_when_retrieval_disabled():
     assert "query_vec" not in item
     assert "neighbor_vecs" not in item
     assert "query_polarity" not in item
+
+
+def test_embed_keys_present_when_joint_training():
+    ds = SentimentDataset(SAMPLE_RECORDS, use_retrieval=True,
+                          top_k=2, max_length=64, joint_training=True)
+    item = ds[0]
+    assert "embed_input_ids" in item
+    assert "embed_attention_mask" in item
+    assert item["embed_input_ids"].shape == (128,)
+    assert item["embed_attention_mask"].shape == (128,)
+
+
+def test_embed_keys_absent_when_not_joint_training():
+    ds = SentimentDataset(SAMPLE_RECORDS, use_retrieval=True,
+                          top_k=2, max_length=64, joint_training=False)
+    item = ds[0]
+    assert "embed_input_ids" not in item
+    assert "embed_attention_mask" not in item

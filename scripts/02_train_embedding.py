@@ -50,6 +50,9 @@ def main():
         model_name=cfg["model_name"],
         proj_dim=cfg["proj_dim"],
         gradient_checkpointing=cfg.get("gradient_checkpointing", False),
+        num_polarities=cfg.get("num_polarities", 0),
+        proj_num_polarities=cfg.get("proj_num_polarities", 0),
+        use_attention_pool=cfg.get("use_attention_pool", False),
     ).to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["lr"],
@@ -69,6 +72,8 @@ def main():
         loss_mode=cfg.get("loss_mode", "combined"),
         loss_alpha=float(cfg.get("loss_alpha", 1.0)),
         loss_beta=float(cfg.get("loss_beta", 1.0)),
+        cls_polarity_weight=float(cfg.get("cls_polarity_weight", 0.0)),
+        proj_polarity_weight=float(cfg.get("proj_polarity_weight", 0.0)),
     )
 
     ckpt_path = os.path.join(cfg["ckpt_dir"], "best.pt")

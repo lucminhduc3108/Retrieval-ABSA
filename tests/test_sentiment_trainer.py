@@ -3,6 +3,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from src.absa.sentiment_trainer import SentimentTrainer
 from src.absa.sentiment_model import SentimentPredictor
+from src.embedding.model import ContrastiveEmbedder
 
 
 def _make_loader(n=8, seq_len=16, k=2, use_retrieval=True):
@@ -134,3 +135,56 @@ def test_combined_loss_training_with_learnable_retriever():
     loader = _make_learnable_loader()
     history = trainer.train(loader, loader, epochs=1)
     assert "sentiment_macro_f1" in history[0]
+
+
+def _make_joint_loader(n=8, seq_len=16, embed_len=16, k=2, vec_dim=256):
+    input_ids = torch.randint(0, 100, (n, seq_len))
+    attention_mask = torch.ones(n, seq_len, dtype=torch.long)
+    sentiment_label = torch.randint(0, 3, (n,))
+    nb_pol = torch.randint(0, 3, (n, k))
+    nb_scores = torch.rand(n, k)
+    query_vec = torch.randn(n, vec_dim)
+    neighbor_vecs = torch.randn(n, k, vec_dim)
+    query_polarity = torch.randint(0, 3, (n,))
+    embed_ids = torch.randint(0, 100, (n, embed_len))
+    embed_mask = torch.ones(n, embed_len, dtype=torch.long)
+
+    ds = TensorDataset(input_ids, attention_mask, sentiment_label,
+                       nb_pol, nb_scores, query_vec, neighbor_vecs,
+                       query_polarity, embed_ids, embed_mask)
+
+    def collate(batch):
+        (ids, mask, lab, pol, sc, qv, nv, qp,
+         eids, emask) = zip(*batch)
+        return {
+            "input_ids": torch.stack(ids),
+            "attention_mask": torch.stack(mask),
+            "sentiment_label": torch.stack(lab),
+            "neighbor_polarities": torch.stack(pol),
+            "neighbor_scores": torch.stack(sc),
+            "query_vec": torch.stack(qv),
+            "neighbor_vecs": torch.stack(nv),
+            "query_polarity": torch.stack(qp),
+            "embed_input_ids": torch.stack(eids),
+            "embed_attention_mask": torch.stack(emask),
+        }
+
+    return DataLoader(ds, batch_size=4, collate_fn=collate)
+
+
+def test_trainer_joint_training_with_embedding_model():
+    emb = ContrastiveEmbedder(proj_dim=256)
+    model = SentimentPredictor(
+        use_retrieval=True, use_learnable_retriever=True,
+        w_mode="diagonal", embedding_model=emb)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    trainer = SentimentTrainer(
+        model=model, optimizer=optimizer, scheduler=None,
+        device="cpu", log_path="", lambda_rank=0.01,
+    )
+    loader = _make_joint_loader()
+    history = trainer.train(loader, loader, epochs=1)
+    assert "sentiment_macro_f1" in history[0]
+    # Verify embedding params were updated (not frozen)
+    init_diag = torch.ones(256)
+    assert not torch.allclose(model.learnable_retriever.W_diag.data, init_diag)

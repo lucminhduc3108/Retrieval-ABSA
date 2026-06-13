@@ -36,10 +36,12 @@ def main():
     parser.add_argument("--no_retrieval", action="store_true")
     parser.add_argument("--grad_accum_steps", type=int, default=None)
     parser.add_argument("--ckpt_path", default=None)
+    parser.add_argument("--joint_training", action="store_true")
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
     use_retrieval = cfg.get("use_retrieval", True) and not args.no_retrieval
+    joint_training = args.joint_training or cfg.get("joint_training", False)
     ret_cfg = load_yaml(args.retrieval_config) if use_retrieval else {"top_k": 0, "threshold": 0.0}
     set_seed(cfg["seed"])
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -51,13 +53,21 @@ def main():
     if use_retrieval:
         if not args.embedding_ckpt:
             parser.error("--embedding_ckpt required when using retrieval")
+        grad_ckpt = cfg.get("gradient_checkpointing", False) and joint_training
         embedding_model = ContrastiveEmbedder(
-            model_name=cfg["model_name"], proj_dim=256)
+            model_name=cfg["model_name"], proj_dim=256,
+            gradient_checkpointing=grad_ckpt)
         embedding_model.load_state_dict(
             torch.load(args.embedding_ckpt, map_location=device))
         embedding_model.to(device)
-        embedding_model.eval()
-        logger.info("Loaded embedding model: %s", args.embedding_ckpt)
+        if joint_training:
+            embedding_model.train()
+            logger.info("Loaded embedding model (joint training): %s",
+                        args.embedding_ckpt)
+        else:
+            embedding_model.eval()
+            logger.info("Loaded embedding model (frozen): %s",
+                        args.embedding_ckpt)
 
         index, metadata, store_vectors = load_index(args.index_dir)
         retriever = Retriever(index, metadata,
@@ -103,12 +113,13 @@ def main():
         top_k=ret_cfg.get("top_k", 0) if use_retrieval else 0,
         device=device,
         use_retrieval=use_retrieval,
+        joint_training=joint_training,
     )
 
     train_ds = SentimentDataset(train_recs, **ds_kwargs)
     val_ds = SentimentDataset(val_recs, **ds_kwargs)
 
-    if embedding_model is not None:
+    if embedding_model is not None and not joint_training:
         embedding_model.cpu()
         train_ds.device = "cpu"
         train_ds.embedding_model = embedding_model
@@ -136,7 +147,10 @@ def main():
         margin=rank_margin,
         w_mode=w_mode,
         w_rank=w_rank,
+        embedding_model=embedding_model if joint_training else None,
     ).to(device)
+    if joint_training and cfg.get("gradient_checkpointing", False):
+        model.encoder.gradient_checkpointing_enable()
 
     encoder_lr = cfg.get("encoder_lr", cfg.get("lr", 2e-5))
     head_lr = cfg.get("head_lr", cfg.get("lr", 2e-4))
@@ -151,6 +165,11 @@ def main():
     if model.learnable_retriever is not None:
         param_groups.append(
             {"params": list(model.learnable_retriever.parameters()), "lr": retriever_lr})
+    if joint_training and model.embedding_model is not None:
+        embedding_lr = cfg.get("embedding_lr", 1e-5)
+        param_groups.append(
+            {"params": list(model.embedding_model.parameters()), "lr": embedding_lr})
+        logger.info("Joint training: embedding_lr=%.1e", embedding_lr)
     optimizer = torch.optim.AdamW(param_groups, weight_decay=cfg["weight_decay"])
 
     epochs = args.epochs if args.epochs else cfg["epochs"]
@@ -171,6 +190,12 @@ def main():
     ckpt_path = args.ckpt_path or os.path.join(cfg["ckpt_dir"], "best.pt")
     trainer.train(train_loader, val_loader, epochs=epochs, ckpt_path=ckpt_path)
     logger.info("Training complete. Best checkpoint: %s", ckpt_path)
+
+    if joint_training and model.embedding_model is not None:
+        emb_path = os.path.join(cfg["ckpt_dir"], "embedding_joint.pt")
+        os.makedirs(cfg["ckpt_dir"], exist_ok=True)
+        torch.save(model.embedding_model.state_dict(), emb_path)
+        logger.info("Saved joint-trained embedding: %s", emb_path)
 
 
 if __name__ == "__main__":
