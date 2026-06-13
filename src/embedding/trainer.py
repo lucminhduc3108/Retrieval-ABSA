@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 class ContrastiveTrainer:
     def __init__(self, model, optimizer, scheduler, tau, device,
                  log_path, grad_clip=1.0, use_fp16=False,
-                 grad_accum_steps=1):
+                 grad_accum_steps=1,
+                 loss_mode="combined", loss_alpha=1.0, loss_beta=1.0):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -23,12 +24,18 @@ class ContrastiveTrainer:
         self.log_path = log_path
         self.grad_clip = grad_clip
         self.grad_accum_steps = grad_accum_steps
+        self.loss_mode = loss_mode
+        self.loss_alpha = loss_alpha
+        self.loss_beta = loss_beta
         self.use_fp16 = use_fp16 and device == "cuda"
         self.scaler = GradScaler("cuda") if self.use_fp16 else None
         if self.use_fp16:
             logger.info("fp16 mixed precision enabled")
         if self.grad_accum_steps > 1:
             logger.info("Gradient accumulation: %d steps", self.grad_accum_steps)
+        if self.loss_mode == "split":
+            logger.info("Split loss: alpha=%.2f (polarity), beta=%.2f (category)",
+                        self.loss_alpha, self.loss_beta)
 
     def _run_batch(self, batch):
         keys = ["anchor_input_ids", "anchor_attention_mask",
@@ -43,15 +50,26 @@ class ContrastiveTrainer:
                 batch["neg1_input_ids"], batch["neg1_attention_mask"],
                 batch["neg2_input_ids"], batch["neg2_attention_mask"],
             )
-            negatives = []
-            if out["neg1_vecs"] is not None:
-                negatives.append(out["neg1_vecs"])
-            if out["neg2_vecs"] is not None:
-                negatives.append(out["neg2_vecs"])
-            loss = infonce_loss(out["anchor_vecs"], out["pos_vecs"],
-                                negatives=negatives if negatives else None,
-                                tau=self.tau)
-        return loss, out
+            anchor = out["anchor_vecs"]
+            pos = out["pos_vecs"]
+            neg1 = out["neg1_vecs"]
+            neg2 = out["neg2_vecs"]
+
+            if self.loss_mode == "split" and neg1 is not None and neg2 is not None:
+                loss_pol = infonce_loss(anchor, pos, negatives=[neg1], tau=self.tau)
+                loss_cat = infonce_loss(anchor, pos, negatives=[neg2], tau=self.tau)
+                loss = self.loss_alpha * loss_pol + self.loss_beta * loss_cat
+            else:
+                negatives = []
+                if neg1 is not None:
+                    negatives.append(neg1)
+                if neg2 is not None:
+                    negatives.append(neg2)
+                loss = infonce_loss(anchor, pos,
+                                    negatives=negatives if negatives else None,
+                                    tau=self.tau)
+                loss_pol = loss_cat = None
+        return loss, out, loss_pol, loss_cat
 
     def train(self, train_loader, val_loader, epochs, patience=3,
               ckpt_path=None) -> list[dict]:
@@ -62,18 +80,23 @@ class ContrastiveTrainer:
         for epoch in range(1, epochs + 1):
             self.model.train()
             total_loss = 0
+            total_loss_pol = 0.0
+            total_loss_cat = 0.0
             self.optimizer.zero_grad()
             epoch_pos_sim = 0.0
             epoch_neg1_sim = 0.0
             epoch_neg2_sim = 0.0
             for step, batch in enumerate(train_loader):
-                loss, out = self._run_batch(batch)
+                loss, out, loss_pol, loss_cat = self._run_batch(batch)
                 scaled_loss = loss / self.grad_accum_steps
                 if self.scaler:
                     self.scaler.scale(scaled_loss).backward()
                 else:
                     scaled_loss.backward()
                 total_loss += loss.item()
+                if loss_pol is not None:
+                    total_loss_pol += loss_pol.item()
+                    total_loss_cat += loss_cat.item()
 
                 with torch.no_grad():
                     a = out["anchor_vecs"].detach()
@@ -117,6 +140,9 @@ class ContrastiveTrainer:
                 "margin_neg1": margin1, "margin_neg2": margin2,
                 **recall,
             }
+            if self.loss_mode == "split":
+                record["loss_polarity"] = total_loss_pol / n_steps
+                record["loss_category"] = total_loss_cat / n_steps
             history.append(record)
             logger.info(
                 "Epoch %d | loss=%.4f | pos=%.3f neg1=%.3f neg2=%.3f "

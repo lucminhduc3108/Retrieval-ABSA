@@ -66,6 +66,9 @@ def main():
         log_path=cfg["log_path"], grad_clip=cfg["grad_clip"],
         use_fp16=device == "cuda",
         grad_accum_steps=grad_accum,
+        loss_mode=cfg.get("loss_mode", "combined"),
+        loss_alpha=float(cfg.get("loss_alpha", 1.0)),
+        loss_beta=float(cfg.get("loss_beta", 1.0)),
     )
 
     ckpt_path = os.path.join(cfg["ckpt_dir"], "best.pt")
