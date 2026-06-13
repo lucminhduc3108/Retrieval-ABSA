@@ -35,7 +35,7 @@ def main():
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     model = ContrastiveEmbedder(model_name=args.model_name, proj_dim=args.proj_dim)
-    model.load_state_dict(torch.load(args.embedding_ckpt, map_location=device))
+    model.load_state_dict(torch.load(args.embedding_ckpt, map_location=device), strict=False)
     model.to(device)
     model.eval()
     logger.info("Loaded embedding checkpoint: %s", args.embedding_ckpt)

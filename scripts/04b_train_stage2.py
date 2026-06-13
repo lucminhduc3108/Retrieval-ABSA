@@ -58,7 +58,7 @@ def main():
             model_name=cfg["model_name"], proj_dim=256,
             gradient_checkpointing=grad_ckpt)
         embedding_model.load_state_dict(
-            torch.load(args.embedding_ckpt, map_location=device))
+            torch.load(args.embedding_ckpt, map_location=device), strict=False)
         embedding_model.to(device)
         if joint_training:
             embedding_model.train()

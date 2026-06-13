@@ -287,7 +287,7 @@ def main():
         embedding_model = ContrastiveEmbedder(
             model_name=s2_cfg["model_name"], proj_dim=256)
         embedding_model.load_state_dict(
-            torch.load(args.embedding_ckpt, map_location="cpu"))
+            torch.load(args.embedding_ckpt, map_location="cpu"), strict=False)
         embedding_model.eval()
         logger.info("Loaded embedding model")
 
