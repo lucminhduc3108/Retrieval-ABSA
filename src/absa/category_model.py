@@ -2,9 +2,7 @@ import torch
 import torch.nn as nn
 from transformers import AutoModel
 
-from src.data.category_builder import (
-    ENTITY_LIST, ENT2IDX, ENTITY2ATTRS, MULTI_ATTR_ENTITIES, NUM_ENTITIES,
-)
+from src.data.category_builder import NUM_CATEGORIES
 
 
 class AsymmetricLoss(nn.Module):
@@ -37,7 +35,7 @@ class AsymmetricLoss(nn.Module):
 
 class CategoryDetector(nn.Module):
     def __init__(self, model_name: str = "microsoft/deberta-v3-base",
-                 num_categories: int = 12,
+                 num_categories: int = NUM_CATEGORIES,
                  pos_weight: torch.Tensor | None = None,
                  use_asl: bool = False,
                  asl_gamma_neg: int = 4,
@@ -94,66 +92,3 @@ class CategoryDetector(nn.Module):
             loss = self.loss_fn(logits, category_labels)
 
         return {"logits": logits, "loss": loss}
-
-
-class HierarchicalCategoryDetector(nn.Module):
-    def __init__(self, model_name: str = "microsoft/deberta-v3-base",
-                 num_entities: int = NUM_ENTITIES,
-                 pos_weight_entity: torch.Tensor | None = None,
-                 pos_weight_food: torch.Tensor | None = None,
-                 pos_weight_drinks: torch.Tensor | None = None,
-                 pos_weight_restaurant: torch.Tensor | None = None):
-        super().__init__()
-        self.encoder = AutoModel.from_pretrained(model_name, dtype=torch.float32)
-        hidden = self.encoder.config.hidden_size
-
-        self.pooler = nn.Sequential(
-            nn.Linear(hidden, hidden),
-            nn.Tanh(),
-            nn.Dropout(0.2),
-        )
-
-        self.entity_head = nn.Linear(hidden, num_entities)
-        self.entity_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight_entity)
-
-        self.food_attr_head = nn.Linear(hidden, len(ENTITY2ATTRS["FOOD"]))
-        self.drinks_attr_head = nn.Linear(hidden, len(ENTITY2ATTRS["DRINKS"]))
-        self.restaurant_attr_head = nn.Linear(hidden, len(ENTITY2ATTRS["RESTAURANT"]))
-
-        self.food_attr_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight_food)
-        self.drinks_attr_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight_drinks)
-        self.restaurant_attr_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight_restaurant)
-
-    def forward(self, input_ids, attention_mask,
-                entity_labels=None,
-                food_attr_labels=None,
-                drinks_attr_labels=None,
-                restaurant_attr_labels=None) -> dict:
-        outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
-        pooled = self.pooler(outputs.last_hidden_state[:, 0])
-
-        entity_logits = self.entity_head(pooled)
-        food_logits = self.food_attr_head(pooled)
-        drinks_logits = self.drinks_attr_head(pooled)
-        restaurant_logits = self.restaurant_attr_head(pooled)
-
-        loss = None
-        if entity_labels is not None:
-            loss = self.entity_loss_fn(entity_logits, entity_labels)
-            for ent_idx, attr_logits, attr_labels, loss_fn in [
-                (ENT2IDX["FOOD"], food_logits, food_attr_labels, self.food_attr_loss_fn),
-                (ENT2IDX["DRINKS"], drinks_logits, drinks_attr_labels, self.drinks_attr_loss_fn),
-                (ENT2IDX["RESTAURANT"], restaurant_logits, restaurant_attr_labels, self.restaurant_attr_loss_fn),
-            ]:
-                if attr_labels is not None:
-                    mask = entity_labels[:, ent_idx] > 0
-                    if mask.any():
-                        loss = loss + loss_fn(attr_logits[mask], attr_labels[mask])
-
-        return {
-            "entity_logits": entity_logits,
-            "food_attr_logits": food_logits,
-            "drinks_attr_logits": drinks_logits,
-            "restaurant_attr_logits": restaurant_logits,
-            "loss": loss,
-        }

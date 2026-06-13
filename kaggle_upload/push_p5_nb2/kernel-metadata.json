@@ -9,8 +9,7 @@
   "enable_internet": true,
   "dataset_sources": [
     "lcminhc/p5-nb1-stage1",
-    "lcminhc/p3s2-embedding-flat",
-    "lcminhc/semeval-absa-restaurant"
+    "lcminhc/p5-embed-v4"
   ],
   "competition_sources": [],
   "kernel_sources": []

@@ -11,13 +11,10 @@ from transformers import get_linear_schedule_with_warmup
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.absa.category_dataset import CategoryDataset, HierarchicalCategoryDataset
-from src.absa.category_model import CategoryDetector, HierarchicalCategoryDetector
-from src.absa.category_trainer import CategoryTrainer, HierarchicalCategoryTrainer
-from src.data.category_builder import (
-    CATEGORY_LIST, NUM_CATEGORIES, NUM_ENTITIES,
-    ENTITY2ATTRS, MULTI_ATTR_ENTITIES, ENT2IDX,
-)
+from src.absa.category_dataset import CategoryDataset
+from src.absa.category_model import CategoryDetector
+from src.absa.category_trainer import CategoryTrainer
+from src.data.category_builder import CATEGORY_LIST, NUM_CATEGORIES
 from src.utils.io import load_yaml, read_jsonl
 from src.utils.seed import set_seed
 
@@ -31,48 +28,6 @@ def compute_pos_weight(records: list[dict],
     counts = [0] * NUM_CATEGORIES
     for r in records:
         for i, v in enumerate(r["category_vector"]):
-            counts[i] += v
-    weights = []
-    for c in counts:
-        if c > 0:
-            w = math.sqrt((n - c) / c)
-            if cap is not None:
-                w = min(w, cap)
-            weights.append(w)
-        else:
-            weights.append(1.0)
-    return torch.tensor(weights, dtype=torch.float32)
-
-
-def compute_entity_pos_weight(records: list[dict],
-                              cap: float | None = None) -> torch.Tensor:
-    n = len(records)
-    counts = [0] * NUM_ENTITIES
-    for r in records:
-        for i, v in enumerate(r["entity_vector"]):
-            counts[i] += v
-    weights = []
-    for c in counts:
-        if c > 0:
-            w = math.sqrt((n - c) / c)
-            if cap is not None:
-                w = min(w, cap)
-            weights.append(w)
-        else:
-            weights.append(1.0)
-    return torch.tensor(weights, dtype=torch.float32)
-
-
-def compute_attr_pos_weight(records: list[dict], entity: str,
-                            cap: float | None = None) -> torch.Tensor:
-    key = f"{entity.lower()}_attr_vector"
-    ent_idx = ENT2IDX[entity]
-    relevant = [r for r in records if r["entity_vector"][ent_idx] == 1]
-    n = len(relevant) if relevant else 1
-    num_attrs = len(ENTITY2ATTRS[entity])
-    counts = [0] * num_attrs
-    for r in relevant:
-        for i, v in enumerate(r[key]):
             counts[i] += v
     weights = []
     for c in counts:
@@ -124,7 +79,6 @@ def main():
         )
         logger.info("Train: %d, Val: %d", len(train_records), len(val_records))
 
-    use_hierarchical = cfg.get("use_hierarchical", False)
     pw_cap = cfg.get("pos_weight_cap", 5.0)
     encoder_lr = float(cfg.get("encoder_lr", 2e-5))
     head_lr = float(cfg.get("head_lr", 1e-4))
@@ -133,115 +87,62 @@ def main():
     use_fp16 = cfg.get("use_fp16", device == "cuda")
     ckpt_path = args.ckpt_path or os.path.join(cfg["ckpt_dir"], "best.pt")
 
-    if use_hierarchical:
-        logger.info("=== Hierarchical mode ===")
-        pw_ent = compute_entity_pos_weight(train_records, cap=pw_cap).to(device)
-        pw_food = compute_attr_pos_weight(train_records, "FOOD", cap=pw_cap).to(device)
-        pw_drinks = compute_attr_pos_weight(train_records, "DRINKS", cap=pw_cap).to(device)
-        pw_rest = compute_attr_pos_weight(train_records, "RESTAURANT", cap=pw_cap).to(device)
-        logger.info("Entity pos_weight: %s", [f"{w:.2f}" for w in pw_ent.tolist()])
-        logger.info("FOOD attr pos_weight: %s", [f"{w:.2f}" for w in pw_food.tolist()])
-        logger.info("DRINKS attr pos_weight: %s", [f"{w:.2f}" for w in pw_drinks.tolist()])
-        logger.info("RESTAURANT attr pos_weight: %s", [f"{w:.2f}" for w in pw_rest.tolist()])
-
-        train_ds = HierarchicalCategoryDataset(
-            train_records, tokenizer_name=cfg["model_name"],
-            max_length=cfg["max_seq_length"])
-        val_ds = HierarchicalCategoryDataset(
-            val_records, tokenizer_name=cfg["model_name"],
-            max_length=cfg["max_seq_length"])
-        train_loader = DataLoader(train_ds, batch_size=cfg["batch_size"], shuffle=True)
-        val_loader = DataLoader(val_ds, batch_size=cfg["batch_size"])
-
-        model = HierarchicalCategoryDetector(
-            model_name=cfg["model_name"],
-            num_entities=cfg.get("num_entities", NUM_ENTITIES),
-            pos_weight_entity=pw_ent,
-            pos_weight_food=pw_food,
-            pos_weight_drinks=pw_drinks,
-            pos_weight_restaurant=pw_rest,
-        ).to(device)
-
-        head_params = (list(model.entity_head.parameters()) +
-                       list(model.food_attr_head.parameters()) +
-                       list(model.drinks_attr_head.parameters()) +
-                       list(model.restaurant_attr_head.parameters()) +
-                       list(model.pooler.parameters()))
-        param_groups = [
-            {"params": list(model.encoder.parameters()), "lr": encoder_lr},
-            {"params": head_params, "lr": head_lr},
-        ]
-        optimizer = torch.optim.AdamW(param_groups, weight_decay=cfg["weight_decay"])
-
-        total_steps = (len(train_loader) * epochs) // grad_accum
-        warmup_steps = int(total_steps * cfg["warmup_ratio"])
-        scheduler = get_linear_schedule_with_warmup(optimizer, warmup_steps, total_steps)
-
-        trainer = HierarchicalCategoryTrainer(
-            model=model, optimizer=optimizer, scheduler=scheduler,
-            device=device, patience=cfg["patience"],
-            grad_clip=cfg["grad_clip"], log_path=cfg["log_path"],
-            use_fp16=use_fp16, grad_accum_steps=grad_accum,
-        )
-        trainer.train(train_loader, val_loader, epochs=epochs, ckpt_path=ckpt_path)
-
+    use_asl = cfg.get("use_asl", False)
+    if pw_cap is None:
+        pos_weight = None
+        logger.info("pos_weight: disabled")
     else:
-        use_asl = cfg.get("use_asl", False)
-        if pw_cap is None:
-            pos_weight = None
-            logger.info("pos_weight: disabled")
-        else:
-            pos_weight = compute_pos_weight(train_records, cap=pw_cap).to(device)
-            logger.info("pos_weight (cap=%.1f): %s",
-                        pw_cap, [f"{w:.2f}" for w in pos_weight.tolist()])
-        if use_asl:
-            logger.info("ASL enabled (gamma_neg=%s, margin=%s) — pos_weight applied inside ASL",
-                        cfg.get("asl_gamma_neg", 4), cfg.get("asl_margin", 0.05))
+        pos_weight = compute_pos_weight(train_records, cap=pw_cap).to(device)
+        logger.info("pos_weight (cap=%.1f): %s",
+                    pw_cap, [f"{w:.2f}" for w in pos_weight.tolist()])
+    if use_asl:
+        logger.info("ASL enabled (gamma_neg=%s, margin=%s)",
+                    cfg.get("asl_gamma_neg", 4), cfg.get("asl_margin", 0.05))
 
-        train_ds = CategoryDataset(train_records, tokenizer_name=cfg["model_name"],
-                                   max_length=cfg["max_seq_length"])
-        val_ds = CategoryDataset(val_records, tokenizer_name=cfg["model_name"],
-                                 max_length=cfg["max_seq_length"])
-        train_loader = DataLoader(train_ds, batch_size=cfg["batch_size"], shuffle=True)
-        val_loader = DataLoader(val_ds, batch_size=cfg["batch_size"])
+    train_ds = CategoryDataset(train_records, tokenizer_name=cfg["model_name"],
+                               max_length=cfg["max_seq_length"])
+    val_ds = CategoryDataset(val_records, tokenizer_name=cfg["model_name"],
+                             max_length=cfg["max_seq_length"])
+    train_loader = DataLoader(train_ds, batch_size=cfg["batch_size"], shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=cfg["batch_size"])
 
-        use_cat_attention = cfg.get("use_cat_attention", False)
-        model = CategoryDetector(
-            model_name=cfg["model_name"],
-            num_categories=cfg["num_categories"],
-            pos_weight=pos_weight,
-            use_asl=use_asl,
-            asl_gamma_neg=cfg.get("asl_gamma_neg", 4),
-            asl_gamma_pos=cfg.get("asl_gamma_pos", 0),
-            asl_margin=cfg.get("asl_margin", 0.05),
-            use_cat_attention=use_cat_attention,
-        ).to(device)
+    use_cat_attention = cfg.get("use_cat_attention", False)
+    model = CategoryDetector(
+        model_name=cfg["model_name"],
+        num_categories=cfg["num_categories"],
+        pos_weight=pos_weight,
+        use_asl=use_asl,
+        asl_gamma_neg=cfg.get("asl_gamma_neg", 4),
+        asl_gamma_pos=cfg.get("asl_gamma_pos", 0),
+        asl_margin=cfg.get("asl_margin", 0.05),
+        use_cat_attention=use_cat_attention,
+    ).to(device)
 
-        if use_cat_attention:
-            head_params = (list(model.category_head.parameters()) +
-                           list(model.cat_queries.parameters()) +
-                           list(model.cat_attention.parameters()) +
-                           list(model.cat_norm.parameters()))
-        else:
-            head_params = (list(model.category_head.parameters()) +
-                           list(model.pooler.parameters()))
-        param_groups = [
-            {"params": list(model.encoder.parameters()), "lr": encoder_lr},
-            {"params": head_params, "lr": head_lr},
-        ]
-        optimizer = torch.optim.AdamW(param_groups, weight_decay=cfg["weight_decay"])
+    if use_cat_attention:
+        head_params = (list(model.category_head.parameters()) +
+                       list(model.cat_queries.parameters()) +
+                       list(model.cat_attention.parameters()) +
+                       list(model.cat_norm.parameters()))
+    else:
+        head_params = (list(model.category_head.parameters()) +
+                       list(model.pooler.parameters()))
+    param_groups = [
+        {"params": list(model.encoder.parameters()), "lr": encoder_lr},
+        {"params": head_params, "lr": head_lr},
+    ]
+    optimizer = torch.optim.AdamW(param_groups, weight_decay=cfg["weight_decay"])
 
-        total_steps = (len(train_loader) * epochs) // grad_accum
-        warmup_steps = int(total_steps * cfg["warmup_ratio"])
-        scheduler = get_linear_schedule_with_warmup(optimizer, warmup_steps, total_steps)
+    total_steps = (len(train_loader) * epochs) // grad_accum
+    warmup_steps = int(total_steps * cfg["warmup_ratio"])
+    scheduler = get_linear_schedule_with_warmup(optimizer, warmup_steps, total_steps)
 
-        trainer = CategoryTrainer(
-            model=model, optimizer=optimizer, scheduler=scheduler,
-            device=device, patience=cfg["patience"],
-            grad_clip=cfg["grad_clip"], log_path=cfg["log_path"],
-            use_fp16=use_fp16, grad_accum_steps=grad_accum,
-        )
-        trainer.train(train_loader, val_loader, epochs=epochs, ckpt_path=ckpt_path)
+    trainer = CategoryTrainer(
+        model=model, optimizer=optimizer, scheduler=scheduler,
+        device=device, patience=cfg["patience"],
+        grad_clip=cfg["grad_clip"], log_path=cfg["log_path"],
+        use_fp16=use_fp16, grad_accum_steps=grad_accum,
+    )
+    trainer.train(train_loader, val_loader, epochs=epochs, ckpt_path=ckpt_path)
 
     logger.info("Training complete. Best checkpoint: %s", ckpt_path)
 

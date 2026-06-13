@@ -1,0 +1,25 @@
+category_path: data/processed/category_detection.jsonl
+ckpt_dir: checkpoints/stage1_2014_cataware
+log_path: logs/stage1_2014_cataware_training.jsonl
+
+model_name: microsoft/deberta-v3-base
+num_categories: 5
+max_seq_length: 256
+
+batch_size: 16
+encoder_lr: 1e-5
+head_lr: 5e-4
+weight_decay: 0.01
+epochs: 30
+patience: 5
+grad_clip: 1.0
+grad_accum_steps: 1
+warmup_ratio: 0.1
+
+use_fp16: false
+val_ratio: 0.2
+seed: 42
+pos_weight_cap: 3.0
+
+use_cat_attention: true
+use_asl: false

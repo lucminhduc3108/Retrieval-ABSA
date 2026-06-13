@@ -8,21 +8,18 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.absa.category_dataset import CategoryDataset, HierarchicalCategoryDataset
-from src.absa.category_model import CategoryDetector, HierarchicalCategoryDetector
+from src.absa.category_dataset import CategoryDataset
+from src.absa.category_model import CategoryDetector
 from sklearn.model_selection import train_test_split
 from src.absa.category_trainer import (
     _apply_global_threshold, _apply_thresholds,
     _tune_global_threshold, _tune_thresholds,
     tune_topk, apply_topk,
-    tune_entity_thresholds, tune_attr_thresholds,
-    hierarchical_decode,
 )
 from src.absa.sentiment_dataset import SentimentDataset
 from src.absa.sentiment_model import SentimentPredictor
 from src.data.category_builder import (
-    CATEGORY_LIST, CAT2IDX, NUM_CATEGORIES, NUM_ENTITIES,
-    ENT2IDX, ENTITY_LIST, ENTITY2ATTRS, MULTI_ATTR_ENTITIES, POL2ID,
+    CATEGORY_LIST, CAT2IDX, NUM_CATEGORIES, POL2ID,
 )
 from src.embedding.model import ContrastiveEmbedder
 from src.evaluation.category_metrics import (
@@ -54,27 +51,6 @@ def collect_logits(model, dataset, device, batch_size=32):
             out = model(batch["input_ids"], batch["attention_mask"])
             all_logits.append(out["logits"].cpu())
     return torch.cat(all_logits, dim=0)
-
-
-def collect_hierarchical_logits(model, dataset, device, batch_size=32):
-    loader = DataLoader(dataset, batch_size=batch_size)
-    ent, food, drinks, rest = [], [], [], []
-    model.eval()
-    with torch.no_grad():
-        for batch in loader:
-            batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
-                     for k, v in batch.items()}
-            out = model(batch["input_ids"], batch["attention_mask"])
-            ent.append(out["entity_logits"].cpu())
-            food.append(out["food_attr_logits"].cpu())
-            drinks.append(out["drinks_attr_logits"].cpu())
-            rest.append(out["restaurant_attr_logits"].cpu())
-    return {
-        "entity": torch.cat(ent, dim=0),
-        "food": torch.cat(food, dim=0),
-        "drinks": torch.cat(drinks, dim=0),
-        "restaurant": torch.cat(rest, dim=0),
-    }
 
 
 def decode_categories(logits, strategy, val_logits, val_labels):
@@ -253,8 +229,6 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info("Device: %s, retrieval: %s", device, use_retrieval)
 
-    use_hierarchical = s1_cfg.get("use_hierarchical", False)
-
     # --- Reconstruct val split (must match training script) ---
     train_records = [r for r in read_jsonl(s1_cfg["category_path"])
                      if r["split"] == "train"]
@@ -278,41 +252,7 @@ def main():
     # --- Load Stage 1 ---
     s1_ckpt = torch.load(args.stage1_ckpt, map_location=device)
 
-    if use_hierarchical:
-        logger.info("=== Hierarchical Stage 1 ===")
-        s1_model = HierarchicalCategoryDetector(
-            model_name=s1_cfg["model_name"],
-            num_entities=s1_cfg.get("num_entities", NUM_ENTITIES),
-        ).to(device)
-        s1_model.load_state_dict(s1_ckpt["model_state"], strict=False)
-
-        val_ds = HierarchicalCategoryDataset(
-            val_records, tokenizer_name=s1_cfg["model_name"],
-            max_length=s1_cfg["max_seq_length"])
-        val_h = collect_hierarchical_logits(s1_model, val_ds, device)
-        val_ent_labels = torch.stack([
-            torch.tensor(r["entity_vector"], dtype=torch.float32) for r in val_records])
-        val_food_labels = torch.stack([
-            torch.tensor(r["food_attr_vector"], dtype=torch.float32) for r in val_records])
-        val_drinks_labels = torch.stack([
-            torch.tensor(r["drinks_attr_vector"], dtype=torch.float32) for r in val_records])
-        val_rest_labels = torch.stack([
-            torch.tensor(r["restaurant_attr_vector"], dtype=torch.float32) for r in val_records])
-
-        ent_thresholds = tune_entity_thresholds(val_h["entity"], val_ent_labels)
-        food_thresholds = tune_attr_thresholds(
-            val_h["food"], val_food_labels, val_ent_labels, ENT2IDX["FOOD"])
-        drinks_thresholds = tune_attr_thresholds(
-            val_h["drinks"], val_drinks_labels, val_ent_labels, ENT2IDX["DRINKS"])
-        rest_thresholds = tune_attr_thresholds(
-            val_h["restaurant"], val_rest_labels, val_ent_labels, ENT2IDX["RESTAURANT"])
-        logger.info("Entity thresholds: %s", [f"{t:.2f}" for t in ent_thresholds])
-        logger.info("FOOD attr thresholds: %s", [f"{t:.2f}" for t in food_thresholds])
-        logger.info("DRINKS attr thresholds: %s", [f"{t:.2f}" for t in drinks_thresholds])
-        logger.info("RESTAURANT attr thresholds: %s", [f"{t:.2f}" for t in rest_thresholds])
-
-    else:
-        s1_model = CategoryDetector(
+    s1_model = CategoryDetector(
             model_name=s1_cfg["model_name"],
             num_categories=s1_cfg["num_categories"],
             use_asl=s1_cfg.get("use_asl", False),
@@ -335,7 +275,7 @@ def main():
             logger.warning(
                 "Re-tuned threshold (%.2f) differs from checkpoint (%.2f) — possible split mismatch",
                 retune_threshold, ckpt_threshold)
-        log_sigmoid_stats(val_logits, "val")
+    log_sigmoid_stats(val_logits, "val")
 
     # --- Load Stage 2 + retrieval ---
     embedding_model = None
@@ -382,44 +322,18 @@ def main():
     sentences, gold_cats_list, gold_pairs_list = build_gold_pairs(
         test_cat, test_sent)
 
-    if use_hierarchical:
-        test_ds = HierarchicalCategoryDataset(
-            test_cat, tokenizer_name=s1_cfg["model_name"],
-            max_length=s1_cfg["max_seq_length"])
-        test_h = collect_hierarchical_logits(s1_model, test_ds, device)
+    cat_ds = CategoryDataset(test_cat, tokenizer_name=s1_cfg["model_name"],
+                             max_length=s1_cfg["max_seq_length"])
+    test_logits = collect_logits(s1_model, cat_ds, device)
+    log_sigmoid_stats(test_logits, "test")
 
-        strategies = ["hierarchical"]
-        all_results = {}
-        all_reports = []
-
-        pred_cats = hierarchical_decode(
-            test_h["entity"], test_h["food"], test_h["drinks"], test_h["restaurant"],
-            ent_thresholds, food_thresholds, drinks_thresholds, rest_thresholds,
-        )
-        avg_preds = sum(len(s) for s in pred_cats) / max(len(pred_cats), 1)
-        info = (f"ent_thresh={[f'{t:.2f}' for t in ent_thresholds]}, "
-                f"food={[f'{t:.2f}' for t in food_thresholds]}, "
-                f"drinks={[f'{t:.2f}' for t in drinks_thresholds]}, "
-                f"rest={[f'{t:.2f}' for t in rest_thresholds]}")
-        strat = "hierarchical"
-        logger.info("[%s] %s, avg predicted cats/sentence: %.2f", strat, info, avg_preds)
-
-    else:
-        cat_ds = CategoryDataset(test_cat, tokenizer_name=s1_cfg["model_name"],
-                                 max_length=s1_cfg["max_seq_length"])
-        test_logits = collect_logits(s1_model, cat_ds, device)
-        log_sigmoid_stats(test_logits, "test")
-
-        strategies = STRATEGIES if args.pred_strategy == "all" else [args.pred_strategy]
-        all_results = {}
-        all_reports = []
+    strategies = STRATEGIES if args.pred_strategy == "all" else [args.pred_strategy]
+    all_results = {}
+    all_reports = []
 
     for strat in strategies:
-        if use_hierarchical:
-            pass  # pred_cats already computed above
-        else:
-            logger.info("--- Strategy: %s ---", strat)
-            pred_cats, info = decode_categories(
+        logger.info("--- Strategy: %s ---", strat)
+        pred_cats, info = decode_categories(
                 test_logits, strat, val_logits, val_labels)
             avg_preds = sum(len(s) for s in pred_cats) / max(len(pred_cats), 1)
             logger.info("[%s] %s, avg predicted cats/sentence: %.2f", strat, info, avg_preds)

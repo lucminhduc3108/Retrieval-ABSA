@@ -12,7 +12,7 @@ def evaluate_local():
     model.load_state_dict(checkpoint["model_state"])
     model.eval()
     
-    thresholds = checkpoint.get("thresholds", [0.5]*12)
+    thresholds = checkpoint.get("thresholds", [0.5] * NUM_CATEGORIES)
     print("Thresholds:", thresholds)
     
     # We will simulate a forward pass manually, or just use the trainer?

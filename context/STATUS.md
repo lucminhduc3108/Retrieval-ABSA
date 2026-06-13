@@ -1,134 +1,90 @@
 # Project Status — Retrieval-based ABSA
 
-**Last updated:** 2026-06-12 (Embedding v4 + data augmentation plan ready)
+**Last updated:** 2026-06-13
 
 ---
 
-## Pipeline Overview (Final)
+## Dataset Switch: SemEval 2016 → 2014
 
-Two-stage pipeline on SemEval 2016 Restaurant SB1:
+**Reason:** SemEval 2016 had 12 fine-grained categories with severe rare category problem (8/12 Cat F1 < 0.7, DRINKS#PRICES F1 = 0.000). Stage 1 was capped at Cat F1 = 0.6962, bottlenecking Joint F1 regardless of Stage 2 quality.
 
-1. **Data Prep & Augmentation:** Parse XML → (category, polarity) pairs. Drop `conflict`. Augment neutral from MAMS-ACSA (5 safe 1-to-1 category mappings).
-2. **Retrieval Engine:** DeBERTa ContrastiveEmbedder (InfoNCE) → 256-dim → FAISS IndexFlatIP. Only used by Phase 2a retrieval strategy.
-3. **Stage 1 — Category Detection:** DeBERTa + Cat-Aware Attention → 12 sigmoid (BCE). Global threshold. **FINAL: Cat-Aware R5.**
-4. **Stage 2 — Sentiment Classification:** Predict sentiment per detected category. Two strategies:
+**SemEval 2014 Task 4 Restaurant** has 5 balanced categories:
+- food (1,166), anecdotes/miscellaneous (1,101), service (562), ambience (385), price (302)
+- Train: 3,044 sentences / 3,516 opinions (after drop 196 conflict + 2 dedup)
+- Test: 800 sentences / 973 opinions (after drop 52 conflict)
+- No augmentation needed — data is balanced
+
+---
+
+## Pipeline Overview
+
+Two-stage pipeline on SemEval 2014 Restaurant:
+
+1. **Data Prep:** Parse XML → (category, polarity) pairs. Drop `conflict`. Deduplicate.
+2. **Retrieval Engine:** DeBERTa ContrastiveEmbedder (InfoNCE) → 256-dim → FAISS IndexFlatIP.
+3. **Stage 1 — Category Detection:** DeBERTa + optional Cat-Aware Attention → 5 sigmoid (ASL/BCE). Global threshold.
+4. **Stage 2 — Sentiment Classification:** Two strategies:
    - **No-Retrieval (baseline):** DeBERTa → MLP(768→256→3).
-   - **Phase 2a (Label Interpolation):** FAISS top-k + Diagonal W + polarity interpolation → MLP(832→256→3) + ranking loss.
+   - **Phase 2a (Label Interpolation):** FAISS top-k + Diagonal W + polarity interpolation.
 5. **Evaluation (end-to-end):** Category F1, Sentiment Acc|Correct Category, Joint F1 (cat+pol).
 
 ---
 
-## Current Best Results (Test Set — NB3 v9, 2026-06-11)
+## Current Results
 
-Stage 1: Cat-Aware R5 | Stage 2: Phase 2a v1 vs No-Ret
+No results yet on SemEval 2014 — pipeline adapted, training pending on Colab.
 
-| Strategy | Cat F1 | Phase 2a Joint F1 | Phase 2a Sent Acc\|CC | No-Ret Joint F1 | No-Ret Sent Acc\|CC |
-|----------|--------|-------------------|----------------------|-----------------|---------------------|
-| per_category | 0.6858 | 0.6096 | 0.8935 | 0.6213 | 0.9106 |
-| **global (0.80)** | **0.6962** | 0.6180 | 0.8926 | **0.6304** | **0.9105** |
-| topk (k=1) | 0.6797 | 0.6054 | 0.8960 | 0.6218 | 0.9204 |
+### Previous Best (SemEval 2016 — archived)
 
-**Best: No-Ret global → Joint F1 = 0.6304, Sent Acc|CC = 0.9105**
-
----
-
-## Stage 1: Category Detection (FINAL)
-
-| Run | Val Cat F1 | Test Cat F1 | Note |
-|-----|-----------|------------|------|
-| R4 ContextPooler | 0.7482 | 0.6844 | Baseline |
-| **R5 Cat-Aware** | **0.7243** | **0.6962** | 12 learnable queries + MHA, 30ep |
+| Metric | No-Retrieval | Phase 2a v1 |
+|--------|-------------|-------------|
+| Cat F1 (global 0.80) | 0.6962 | 0.6962 |
+| Joint F1 | **0.6304** | 0.6180 |
+| Sent Acc\|CC | **91.05%** | 89.26% |
 
 ---
 
-## Stage 2: Sentiment Classification
+## Code Changes (2026-06-13)
 
-| Run | Val Acc | Val Macro F1 | Test Joint F1 (global) | Note |
-|-----|---------|-------------|----------------------|------|
-| Run 2 (frozen cosine) | 0.8980 | 0.5973 | 0.6139 | tau=0.5, no augmentation |
-| Phase 2a v1 (full W) | 0.8215 | 0.7916 | 0.6180 | 65K params, overfit |
-| **No-ret** | **0.8943** | 0.6737 | **0.6304** | **Best test Joint F1** |
-| Phase 2a v2 (diagonal W) | -- | -- | -- | NB2 v17 on Kaggle |
-
----
-
-## Phase 2a v1: FAILED (2026-06-11)
-
-**Bugs found:** padding bias (zero-vec got weight), rank_margin dead key.
-**Why retrieval lost:** 65K params overfit, padding distortion, train-test neutral mismatch.
-
-## Phase 2a v2: Diagonal W + Bug Fixes (2026-06-11)
-
-| Change | v1 | v2 |
-|--------|----|----|
-| W mode | full (65K params) | **diagonal (256 params)** |
-| Padding | zero-vec gets weight | **masked to -inf** |
-| rank_margin | dead key (0.1) | **wired (0.5)** |
-| tau | 0.1 | **0.3** |
-| lambda_rank | 0.1 | **0.01** |
+- [x] XML parser: added `parse_semeval2014_xml()` for 2014 format
+- [x] Category builder: 12 → 5 categories, removed entity/attribute hierarchy
+- [x] Data preparation: updated for 2014 paths, removed BIO builder
+- [x] Category model/dataset/trainer: removed HierarchicalCategoryDetector
+- [x] Evaluation script: removed hierarchical branches
+- [x] Created configs: `stage1_2014.yaml`, `stage1_2014_cataware.yaml`, `embedding_2014.yaml`, `stage2_2014.yaml`, `stage2_2014_noret.yaml`
+- [x] All 197 tests passing
+- [x] Data pipeline generates correct output (3,516 train / 973 test opinions)
+- [x] Kaggle notebooks NB1/NB2/NB3 updated for SemEval 2014 (configs, paths, dataset refs)
+- [x] Kernel metadata updated: `p3s2-embedding-flat` → `p5-embed-v4`
 
 ---
 
-## Embedding v4 + Data Improvement (2026-06-12) — IN PROGRESS
+## Kaggle Notebooks (SemEval 2014)
 
-### Root cause analysis
+All 4 notebooks updated for SemEval 2014. Run order:
 
-Retrieval thua no-ret vì embedding quality kém:
-- **Score collapse:** mean cosine = 0.9961 → retrieval gần random
-- **Polarity match:** 61.6% overall, neutral chỉ 8.6%
-- **Contrastive triplets:** chỉ 100 neutral (4%) → embedding mù neutral
-- **Hard negative mining chưa chạy:** `hard_contrastive_triplets.jsonl` chưa tồn tại
+| # | Notebook | Config | Kaggle Dataset Input | Output Dataset |
+|---|----------|--------|---------------------|----------------|
+| NB0 | `p5_nb_embed_v4.ipynb` | `embedding_v4_s1/s2.yaml` | `semeval-absa-restaurant` | `p5-embed-v4` |
+| NB1 | `p5_nb1_stage1.ipynb` | `stage1_2014.yaml` + `stage1_2014_cataware.yaml` | `semeval-absa-restaurant` | `p5-nb1-stage1` |
+| NB2 | `p5_nb2_stage2.ipynb` | `stage2_2014.yaml` + `stage2_2014_noret.yaml` | `p5-nb1-stage1`, `p5-embed-v4` | `p5-nb2-stage2` |
+| NB3 | `p5_nb3_eval.ipynb` | All above | `p5-nb1-stage1`, `p5-nb2-stage2`, `p5-embed-v4` | Metrics only |
 
-### Data augmentation (DONE — local)
+**Pre-requisite:** Upload 2014 XMLs (`Restaurants_Train.xml`, `Restaurants_Test_Gold.xml`) to `semeval-absa-restaurant` Kaggle dataset.
 
-MAMS-ACSA neutral augmentation với 5 safe 1-to-1 mappings:
-- place → LOCATION#GENERAL, miscellaneous → RESTAURANT#MISCELLANEOUS
-- ambience → AMBIENCE#GENERAL, service/staff → SERVICE#GENERAL
-- 3 nhãn mơ hồ (food, menu, price) **không dùng** — 1-to-nhiều mapping với SemEval
-
-| File | Records | Neutral | Neutral % |
-|------|---------|---------|-----------|
-| `classification_aug.jsonl` | 2,807 train | 401 | 14.3% |
-| `contrastive_triplets_aug.jsonl` | 2,805 | 400 anchors | 14.3% |
-| `sentiment_records_aug_300.jsonl` | 2,807 train | 401 | 14.3% |
-
-Neutral triplets: 100 → **400** (4x tăng).
-
-### Embedding v4 configs (DONE — local)
-
-| Config | Triplets | tau | Note |
-|--------|----------|-----|------|
-| `embedding_v4_s1.yaml` | contrastive_triplets_aug.jsonl | **0.07** | Stage 1: augmented random triplets |
-| `embedding_v4_s2.yaml` | hard_contrastive_triplets_aug.jsonl | **0.07** | Stage 2: hard mined triplets |
-
-Key change: tau 0.12 → 0.07 (sharpen distribution, force larger margin).
-
-### Kaggle workflow (PENDING)
-
-```
-1. Train embedding Stage 1 (augmented triplets, tau=0.07)
-2. Hard negative mining from Stage 1 model
-3. Train embedding Stage 2 (hard triplets)
-4. Build FAISS index from Stage 2 model
-5. Train Phase 2a v2 with new embedding + sentiment_records_aug_300
-6. Eval in NB3
-```
-
----
+NB1 trains both ASL and Cat-Aware configs → compare val Cat F1 → set `STAGE1_VARIANT` in NB3.
 
 ## Next Actions
 
-- [x] Data augmentation: MAMS neutral → contrastive triplets + sentiment records
-- [x] Embedding v4 configs (tau=0.07, separate ckpt dirs)
-- [ ] Upload augmented data + configs to Kaggle dataset
-- [ ] Kaggle: Embedding v4 two-stage training
-- [ ] Kaggle: Build FAISS index + train Phase 2a v2
-- [ ] Kaggle: NB3 eval — target Joint F1 > 0.6304
+- [ ] Upload SemEval 2014 XMLs to Kaggle dataset `semeval-absa-restaurant`
+- [ ] Kaggle: Run NB0 — Train embedding v4 (2-stage)
+- [ ] Kaggle: Run NB1 — Train Stage 1 (ASL + Cat-Aware)
+- [ ] Kaggle: Run NB2 — Train Stage 2 (retrieval + no-retrieval)
+- [ ] Kaggle: Run NB3 — End-to-end evaluation — target Cat F1 > 0.85
 
 ---
 
 ## Training Environment
 
-- **GPU:** Kaggle T4x2 (1 GPU used). Stage 1 batch=16, Stage 2 batch=32 grad_accum=2.
+- **GPU:** Google Colab T4.
 - **Local:** Windows 11, no GPU training — code and tests only.
-- **Kaggle datasets:** `semeval-absa-restaurant`, `p5-nb1-stage1`, `p5-nb2-stage2`, `p3s2-embedding-flat`.
