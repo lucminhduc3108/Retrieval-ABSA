@@ -51,6 +51,28 @@ def test_skip_when_no_semi_hard_neg_candidate():
     assert build_contrastive_triplets(recs, seed=0) == []
 
 
+def test_no_neg2_omits_neg2_fields():
+    recs = [_mk(0, "FOOD#QUALITY", "positive"), _mk(1, "FOOD#QUALITY", "positive"),
+            _mk(2, "FOOD#QUALITY", "negative"), _mk(3, "SERVICE#GENERAL", "positive")]
+    triplets = build_contrastive_triplets(recs, seed=0, include_neg2=False)
+    assert len(triplets) > 0
+    for t in triplets:
+        assert "neg2_id" not in t
+        assert "neg2_sentence" not in t
+        assert t["anchor_aspect"] == t["positive_aspect"]
+        assert t["anchor_polarity"] == t["positive_polarity"]
+        assert t["anchor_aspect"] == t["neg1_aspect"]
+        assert t["anchor_polarity"] != t["neg1_polarity"]
+
+
+def test_no_neg2_recovers_skipped_anchors():
+    recs = [_mk(0, "FOOD#QUALITY", "positive"), _mk(1, "FOOD#QUALITY", "positive"),
+            _mk(2, "FOOD#QUALITY", "negative")]
+    assert build_contrastive_triplets(recs, seed=0, include_neg2=True) == []
+    triplets = build_contrastive_triplets(recs, seed=0, include_neg2=False)
+    assert len(triplets) > 0
+
+
 import numpy as np
 from src.data.contrastive_builder import build_hard_negative_triplets
 
@@ -111,3 +133,24 @@ def test_hard_neg_skip_when_no_candidates():
     vectors = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
     triplets = build_hard_negative_triplets(recs, vectors)
     assert triplets == []
+
+
+def test_hard_neg_no_neg2_omits_neg2_fields():
+    recs = [
+        {"id": "r0", "sentence": "s0", "aspect_category": "FOOD#QUALITY", "polarity": "positive"},
+        {"id": "r1", "sentence": "s1", "aspect_category": "FOOD#QUALITY", "polarity": "positive"},
+        {"id": "r2", "sentence": "s2", "aspect_category": "FOOD#QUALITY", "polarity": "negative"},
+        {"id": "r3", "sentence": "s3", "aspect_category": "SERVICE#GENERAL", "polarity": "positive"},
+    ]
+    vectors = np.array([
+        [1.0, 0.0], [0.5, 0.5], [0.9, 0.1], [0.3, 0.7],
+    ], dtype=np.float32)
+    vectors = vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
+
+    triplets = build_hard_negative_triplets(recs, vectors, include_neg2=False)
+    assert len(triplets) > 0
+    for t in triplets:
+        assert "neg2_id" not in t
+        assert "neg2_sim" not in t
+        assert t["anchor_aspect"] == t["neg1_aspect"]
+        assert t["anchor_polarity"] != t["neg1_polarity"]

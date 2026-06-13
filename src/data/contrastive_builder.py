@@ -7,7 +7,8 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def build_contrastive_triplets(cls_records: list[dict], seed: int = 42) -> list[dict]:
+def build_contrastive_triplets(cls_records: list[dict], seed: int = 42,
+                               include_neg2: bool = True) -> list[dict]:
     rng = random.Random(seed)
 
     by_asp_pol = defaultdict(list)
@@ -33,33 +34,39 @@ def build_contrastive_triplets(cls_records: list[dict], seed: int = 42) -> list[
             logger.warning("No hard negative candidate for anchor %s", a_id)
             continue
 
-        neg2_candidates = [r for r in by_pol[a_pol]
-                           if r["aspect_category"] != a_asp and r["id"] != a_id]
-        if not neg2_candidates:
-            logger.warning("No semi-hard negative candidate for anchor %s", a_id)
-            continue
-
         pos = rng.choice(pos_candidates)
         neg1 = rng.choice(neg1_candidates)
-        neg2 = rng.choice(neg2_candidates)
 
-        triplets.append({
+        triplet = {
             "anchor_id": a_id, "anchor_sentence": anchor["sentence"],
             "anchor_aspect": a_asp, "anchor_polarity": a_pol,
             "positive_id": pos["id"], "positive_sentence": pos["sentence"],
             "positive_aspect": pos["aspect_category"], "positive_polarity": pos["polarity"],
             "neg1_id": neg1["id"], "neg1_sentence": neg1["sentence"],
             "neg1_aspect": neg1["aspect_category"], "neg1_polarity": neg1["polarity"],
-            "neg2_id": neg2["id"], "neg2_sentence": neg2["sentence"],
-            "neg2_aspect": neg2["aspect_category"], "neg2_polarity": neg2["polarity"],
-        })
+        }
+
+        if include_neg2:
+            neg2_candidates = [r for r in by_pol[a_pol]
+                               if r["aspect_category"] != a_asp and r["id"] != a_id]
+            if not neg2_candidates:
+                logger.warning("No semi-hard negative candidate for anchor %s", a_id)
+                continue
+            neg2 = rng.choice(neg2_candidates)
+            triplet.update({
+                "neg2_id": neg2["id"], "neg2_sentence": neg2["sentence"],
+                "neg2_aspect": neg2["aspect_category"], "neg2_polarity": neg2["polarity"],
+            })
+
+        triplets.append(triplet)
 
     return triplets
 
 
 def build_hard_negative_triplets(cls_records: list[dict],
                                   vectors: np.ndarray,
-                                  seed: int = 42) -> list[dict]:
+                                  seed: int = 42,
+                                  include_neg2: bool = True) -> list[dict]:
     rng = random.Random(seed)
     sim = vectors @ vectors.T
 
@@ -84,11 +91,6 @@ def build_hard_negative_triplets(cls_records: list[dict],
         if not neg1_indices:
             continue
 
-        neg2_indices = [j for j in by_pol[a_pol]
-                        if cls_records[j]["aspect_category"] != a_asp and j != i]
-        if not neg2_indices:
-            continue
-
         pos_idx = rng.choice(pos_indices)
         pos_sim = float(sim[i, pos_idx])
 
@@ -96,24 +98,34 @@ def build_hard_negative_triplets(cls_records: list[dict],
         neg1_idx = neg1_indices[int(np.argmax(neg1_sims))]
         neg1_sim = float(sim[i, neg1_idx])
 
-        neg2_sims = sim[i, neg2_indices]
-        neg2_idx = neg2_indices[int(np.argmax(neg2_sims))]
-        neg2_sim = float(sim[i, neg2_idx])
-
         pos = cls_records[pos_idx]
         neg1 = cls_records[neg1_idx]
-        neg2 = cls_records[neg2_idx]
 
-        triplets.append({
+        triplet = {
             "anchor_id": a_id, "anchor_sentence": anchor["sentence"],
             "anchor_aspect": a_asp, "anchor_polarity": a_pol,
             "positive_id": pos["id"], "positive_sentence": pos["sentence"],
             "positive_aspect": pos["aspect_category"], "positive_polarity": pos["polarity"],
             "neg1_id": neg1["id"], "neg1_sentence": neg1["sentence"],
             "neg1_aspect": neg1["aspect_category"], "neg1_polarity": neg1["polarity"],
-            "neg2_id": neg2["id"], "neg2_sentence": neg2["sentence"],
-            "neg2_aspect": neg2["aspect_category"], "neg2_polarity": neg2["polarity"],
-            "pos_sim": pos_sim, "neg1_sim": neg1_sim, "neg2_sim": neg2_sim,
-        })
+            "pos_sim": pos_sim, "neg1_sim": neg1_sim,
+        }
+
+        if include_neg2:
+            neg2_indices = [j for j in by_pol[a_pol]
+                            if cls_records[j]["aspect_category"] != a_asp and j != i]
+            if not neg2_indices:
+                continue
+            neg2_sims = sim[i, neg2_indices]
+            neg2_idx = neg2_indices[int(np.argmax(neg2_sims))]
+            neg2_sim = float(sim[i, neg2_idx])
+            neg2 = cls_records[neg2_idx]
+            triplet.update({
+                "neg2_id": neg2["id"], "neg2_sentence": neg2["sentence"],
+                "neg2_aspect": neg2["aspect_category"], "neg2_polarity": neg2["polarity"],
+                "neg2_sim": neg2_sim,
+            })
+
+        triplets.append(triplet)
 
     return triplets

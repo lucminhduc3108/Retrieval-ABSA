@@ -31,14 +31,16 @@ class ContrastiveTripletDataset(Dataset):
         anchor = self._tokenize(t["anchor_sentence"], t["anchor_aspect"])
         pos = self._tokenize(t["positive_sentence"], t["positive_aspect"])
         neg1 = self._tokenize(t["neg1_sentence"], t["neg1_aspect"])
-        neg2 = self._tokenize(t["neg2_sentence"], t["neg2_aspect"])
-        return {
+        item = {
             "anchor_input_ids": anchor["input_ids"],
             "anchor_attention_mask": anchor["attention_mask"],
             "pos_input_ids": pos["input_ids"],
             "pos_attention_mask": pos["attention_mask"],
             "neg1_input_ids": neg1["input_ids"],
             "neg1_attention_mask": neg1["attention_mask"],
-            "neg2_input_ids": neg2["input_ids"],
-            "neg2_attention_mask": neg2["attention_mask"],
         }
+        if "neg2_sentence" in t:
+            neg2 = self._tokenize(t["neg2_sentence"], t["neg2_aspect"])
+            item["neg2_input_ids"] = neg2["input_ids"]
+            item["neg2_attention_mask"] = neg2["attention_mask"]
+        return item

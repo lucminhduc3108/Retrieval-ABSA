@@ -25,6 +25,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base_dir", default=".", help="Project root containing SemEval-2014/")
     parser.add_argument("--out_dir", default="data/processed")
+    parser.add_argument("--no_neg2", action="store_true",
+                        help="Build polarity-only triplets (no neg2)")
     args = parser.parse_args()
 
     all_cls = []
@@ -58,12 +60,16 @@ def main():
     train_cls = [r for r in all_cls if r["split"] == "train"]
 
     # --- Contrastive triplets (from train only) ---
-    triplets = build_contrastive_triplets(train_cls, seed=42)
+    include_neg2 = not args.no_neg2
+    triplets = build_contrastive_triplets(train_cls, seed=42,
+                                          include_neg2=include_neg2)
+    triplet_filename = ("contrastive_triplets_polonly.jsonl" if args.no_neg2
+                        else "contrastive_triplets.jsonl")
 
     # --- Write outputs ---
     os.makedirs(args.out_dir, exist_ok=True)
     write_jsonl(all_cls, os.path.join(args.out_dir, "classification.jsonl"))
-    write_jsonl(triplets, os.path.join(args.out_dir, "contrastive_triplets.jsonl"))
+    write_jsonl(triplets, os.path.join(args.out_dir, triplet_filename))
     write_jsonl(all_category, os.path.join(args.out_dir, "category_detection.jsonl"))
     write_jsonl(all_sentiment, os.path.join(args.out_dir, "sentiment_records.jsonl"))
 

@@ -112,6 +112,38 @@ def test_evaluate_recall_returns_expected_keys(tmp_path):
     assert result["intra_inter_ratio"] > 0
 
 
+def _make_triplet_no_neg2(i):
+    return {
+        "anchor_id": f"a{i}", "anchor_sentence": f"food is good {i}",
+        "anchor_aspect": "FOOD#QUALITY", "anchor_polarity": "positive",
+        "positive_id": f"p{i}", "positive_sentence": f"great food {i}",
+        "positive_aspect": "FOOD#QUALITY", "positive_polarity": "positive",
+        "neg1_id": f"n1_{i}", "neg1_sentence": f"food was bad {i}",
+        "neg1_aspect": "FOOD#QUALITY", "neg1_polarity": "negative",
+    }
+
+
+def test_training_without_neg2(tmp_path):
+    torch.manual_seed(0)
+    p = tmp_path / "triplets.jsonl"
+    write_jsonl([_make_triplet_no_neg2(i) for i in range(4)], str(p))
+    tok = AutoTokenizer.from_pretrained("microsoft/deberta-v3-base")
+    ds = ContrastiveTripletDataset(str(p), tok, max_length=32)
+    item = ds[0]
+    assert "neg2_input_ids" not in item
+
+    loader = torch.utils.data.DataLoader(ds, batch_size=2)
+    model = ContrastiveEmbedder(proj_dim=32)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
+    trainer = ContrastiveTrainer(model, optimizer, scheduler=None,
+                                 tau=0.07, device="cpu", log_path="")
+    history = trainer.train(loader, loader, epochs=2, patience=5)
+    assert len(history) == 2
+    for rec in history:
+        assert "margin_neg1" in rec
+        assert "margin_neg2" not in rec
+
+
 def test_trainer_with_grad_accum(tmp_path):
     torch.manual_seed(0)
     p = tmp_path / "triplets.jsonl"

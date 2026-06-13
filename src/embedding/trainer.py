@@ -40,15 +40,17 @@ class ContrastiveTrainer:
     def _run_batch(self, batch):
         keys = ["anchor_input_ids", "anchor_attention_mask",
                 "pos_input_ids", "pos_attention_mask",
-                "neg1_input_ids", "neg1_attention_mask",
-                "neg2_input_ids", "neg2_attention_mask"]
+                "neg1_input_ids", "neg1_attention_mask"]
+        has_neg2 = "neg2_input_ids" in batch
+        if has_neg2:
+            keys += ["neg2_input_ids", "neg2_attention_mask"]
         batch = {k: batch[k].to(self.device) for k in keys}
         with autocast("cuda", enabled=self.use_fp16):
             out = self.model(
                 batch["anchor_input_ids"], batch["anchor_attention_mask"],
                 batch["pos_input_ids"], batch["pos_attention_mask"],
                 batch["neg1_input_ids"], batch["neg1_attention_mask"],
-                batch["neg2_input_ids"], batch["neg2_attention_mask"],
+                batch.get("neg2_input_ids"), batch.get("neg2_attention_mask"),
             )
             anchor = out["anchor_vecs"]
             pos = out["pos_vecs"]
@@ -105,7 +107,8 @@ class ContrastiveTrainer:
                     n1 = out.get("neg1_vecs")
                     n2 = out.get("neg2_vecs")
                     epoch_neg1_sim += (a * n1.detach()).sum(dim=1).mean().item() if n1 is not None else 0.0
-                    epoch_neg2_sim += (a * n2.detach()).sum(dim=1).mean().item() if n2 is not None else 0.0
+                    if n2 is not None:
+                        epoch_neg2_sim += (a * n2.detach()).sum(dim=1).mean().item()
 
                 is_accum_step = (step + 1) % self.grad_accum_steps == 0
                 is_last_step = (step + 1) == len(train_loader)
@@ -128,30 +131,43 @@ class ContrastiveTrainer:
             n_steps = len(train_loader)
             avg_pos_sim = epoch_pos_sim / n_steps
             avg_neg1_sim = epoch_neg1_sim / n_steps
-            avg_neg2_sim = epoch_neg2_sim / n_steps
             margin1 = avg_pos_sim - avg_neg1_sim
-            margin2 = avg_pos_sim - avg_neg2_sim
 
             recall = self.evaluate_recall(val_loader)
             record = {
                 "epoch": epoch, "train_loss": avg_loss,
                 "avg_pos_sim": avg_pos_sim, "avg_neg1_sim": avg_neg1_sim,
-                "avg_neg2_sim": avg_neg2_sim,
-                "margin_neg1": margin1, "margin_neg2": margin2,
+                "margin_neg1": margin1,
                 **recall,
             }
+            if epoch_neg2_sim > 0:
+                avg_neg2_sim = epoch_neg2_sim / n_steps
+                margin2 = avg_pos_sim - avg_neg2_sim
+                record["avg_neg2_sim"] = avg_neg2_sim
+                record["margin_neg2"] = margin2
             if self.loss_mode == "split":
                 record["loss_polarity"] = total_loss_pol / n_steps
                 record["loss_category"] = total_loss_cat / n_steps
             history.append(record)
-            logger.info(
-                "Epoch %d | loss=%.4f | pos=%.3f neg1=%.3f neg2=%.3f "
-                "| m1=%.3f m2=%.3f | R@1=%.3f R@3=%.3f R@5=%.3f",
-                epoch, avg_loss, avg_pos_sim, avg_neg1_sim, avg_neg2_sim,
-                margin1, margin2,
-                recall.get("recall@1", 0.0), recall["recall@3"],
-                recall.get("recall@5", 0.0),
-            )
+
+            if "margin_neg2" in record:
+                logger.info(
+                    "Epoch %d | loss=%.4f | pos=%.3f neg1=%.3f neg2=%.3f "
+                    "| m1=%.3f m2=%.3f | R@1=%.3f R@3=%.3f R@5=%.3f",
+                    epoch, avg_loss, avg_pos_sim, avg_neg1_sim, avg_neg2_sim,
+                    margin1, margin2,
+                    recall.get("recall@1", 0.0), recall["recall@3"],
+                    recall.get("recall@5", 0.0),
+                )
+            else:
+                logger.info(
+                    "Epoch %d | loss=%.4f | pos=%.3f neg1=%.3f "
+                    "| m1=%.3f | R@1=%.3f R@3=%.3f R@5=%.3f",
+                    epoch, avg_loss, avg_pos_sim, avg_neg1_sim,
+                    margin1,
+                    recall.get("recall@1", 0.0), recall["recall@3"],
+                    recall.get("recall@5", 0.0),
+                )
 
             if self.log_path:
                 Path(self.log_path).parent.mkdir(parents=True, exist_ok=True)
