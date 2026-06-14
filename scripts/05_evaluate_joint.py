@@ -253,28 +253,28 @@ def main():
     s1_ckpt = torch.load(args.stage1_ckpt, map_location=device)
 
     s1_model = CategoryDetector(
-            model_name=s1_cfg["model_name"],
-            num_categories=s1_cfg["num_categories"],
-            use_asl=s1_cfg.get("use_asl", False),
-            use_cat_attention=s1_cfg.get("use_cat_attention", False),
-        ).to(device)
-        s1_model.load_state_dict(s1_ckpt["model_state"], strict=False)
-        ckpt_threshold = s1_ckpt.get("threshold")
-        if ckpt_threshold is not None:
-            logger.info("Checkpoint global threshold: %.2f", ckpt_threshold)
+        model_name=s1_cfg["model_name"],
+        num_categories=s1_cfg["num_categories"],
+        use_asl=s1_cfg.get("use_asl", False),
+        use_cat_attention=s1_cfg.get("use_cat_attention", False),
+    ).to(device)
+    s1_model.load_state_dict(s1_ckpt["model_state"], strict=False)
+    ckpt_threshold = s1_ckpt.get("threshold")
+    if ckpt_threshold is not None:
+        logger.info("Checkpoint global threshold: %.2f", ckpt_threshold)
 
-        val_ds = CategoryDataset(val_records, tokenizer_name=s1_cfg["model_name"],
-                                 max_length=s1_cfg["max_seq_length"])
-        val_logits = collect_logits(s1_model, val_ds, device)
-        val_labels = torch.stack([torch.tensor(r["category_vector"], dtype=torch.float32)
-                                  for r in val_records])
+    val_ds = CategoryDataset(val_records, tokenizer_name=s1_cfg["model_name"],
+                             max_length=s1_cfg["max_seq_length"])
+    val_logits = collect_logits(s1_model, val_ds, device)
+    val_labels = torch.stack([torch.tensor(r["category_vector"], dtype=torch.float32)
+                              for r in val_records])
 
-        retune_threshold = _tune_global_threshold(val_logits, val_labels)
-        logger.info("Re-tuned global threshold: %.2f", retune_threshold)
-        if ckpt_threshold is not None and abs(retune_threshold - ckpt_threshold) > 0.05:
-            logger.warning(
-                "Re-tuned threshold (%.2f) differs from checkpoint (%.2f) — possible split mismatch",
-                retune_threshold, ckpt_threshold)
+    retune_threshold = _tune_global_threshold(val_logits, val_labels)
+    logger.info("Re-tuned global threshold: %.2f", retune_threshold)
+    if ckpt_threshold is not None and abs(retune_threshold - ckpt_threshold) > 0.05:
+        logger.warning(
+            "Re-tuned threshold (%.2f) differs from checkpoint (%.2f) — possible split mismatch",
+            retune_threshold, ckpt_threshold)
     log_sigmoid_stats(val_logits, "val")
 
     # --- Load Stage 2 + retrieval ---
@@ -334,9 +334,9 @@ def main():
     for strat in strategies:
         logger.info("--- Strategy: %s ---", strat)
         pred_cats, info = decode_categories(
-                test_logits, strat, val_logits, val_labels)
-            avg_preds = sum(len(s) for s in pred_cats) / max(len(pred_cats), 1)
-            logger.info("[%s] %s, avg predicted cats/sentence: %.2f", strat, info, avg_preds)
+            test_logits, strat, val_logits, val_labels)
+        avg_preds = sum(len(s) for s in pred_cats) / max(len(pred_cats), 1)
+        logger.info("[%s] %s, avg predicted cats/sentence: %.2f", strat, info, avg_preds)
 
         cat_m, joint_m, sent_cond, per_cat = run_joint_eval(
             pred_cats, test_cat, gold_cats_list, gold_pairs_list,
