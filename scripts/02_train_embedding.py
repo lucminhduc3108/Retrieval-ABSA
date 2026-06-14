@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--config", default="configs/embedding.yaml")
     parser.add_argument("--limit", type=int, default=None, help="Limit dataset size for smoke test")
     parser.add_argument("--epochs", type=int, default=None, help="Override epochs for smoke test")
+    parser.add_argument("--resume_from", default=None, help="Load weights from checkpoint before training")
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
@@ -54,6 +55,11 @@ def main():
         proj_num_polarities=cfg.get("proj_num_polarities", 0),
         use_attention_pool=cfg.get("use_attention_pool", False),
     ).to(device)
+
+    if args.resume_from:
+        state = torch.load(args.resume_from, map_location=device)
+        model.load_state_dict(state, strict=False)
+        logger.info("Resumed weights from %s", args.resume_from)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["lr"],
                                   weight_decay=cfg["weight_decay"])
