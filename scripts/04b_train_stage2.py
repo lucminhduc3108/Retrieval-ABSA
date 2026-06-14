@@ -16,7 +16,8 @@ from src.absa.sentiment_dataset import SentimentDataset
 from src.absa.sentiment_model import SentimentPredictor
 from src.absa.sentiment_trainer import SentimentTrainer
 from src.embedding.model import ContrastiveEmbedder
-from src.retrieval.index import load_index
+from src.retrieval.encoder import encode_records
+from src.retrieval.index import build_index, load_index
 from src.retrieval.retriever import Retriever
 from src.utils.io import load_yaml, read_jsonl
 from src.utils.seed import set_seed
@@ -68,12 +69,6 @@ def main():
             embedding_model.eval()
             logger.info("Loaded embedding model (frozen): %s",
                         args.embedding_ckpt)
-
-        index, metadata, store_vectors = load_index(args.index_dir)
-        retriever = Retriever(index, metadata,
-                              top_k=ret_cfg["top_k"],
-                              threshold=ret_cfg["threshold"])
-        logger.info("Loaded FAISS index (%d vectors)", index.ntotal)
     else:
         logger.info("Running WITHOUT retrieval")
 
@@ -93,6 +88,23 @@ def main():
     val_recs = [r for r in train_records if r["sentence"] in val_sents_set]
 
     logger.info("Train: %d records, Val: %d records", len(train_recs), len(val_recs))
+
+    if use_retrieval:
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(cfg["model_name"])
+        vectors = encode_records(
+            train_recs, embedding_model, tokenizer,
+            max_length=128, batch_size=64, device=device)
+        index = build_index(vectors)
+        store_vectors = vectors
+        metadata = [{"id": r["id"], "sentence": r["sentence"],
+                     "aspect_category": r.get("aspect_category", r.get("category")),
+                     "polarity": r["polarity"]} for r in train_recs]
+        retriever = Retriever(index, metadata,
+                              top_k=ret_cfg["top_k"],
+                              threshold=ret_cfg["threshold"])
+        logger.info("Built train-only FAISS index (%d vectors, val excluded)",
+                    index.ntotal)
 
     pol_counts = Counter(r["polarity"] for r in train_recs)
     pol_order = ["positive", "negative", "neutral"]
