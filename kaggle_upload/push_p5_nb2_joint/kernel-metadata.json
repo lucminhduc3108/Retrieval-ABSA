@@ -1,0 +1,16 @@
+{
+  "id": "lcminhc/p5-nb2-joint-stage2-train",
+  "title": "P5 NB2-Joint Stage2 Train",
+  "code_file": "p5_nb2_joint.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "lcminhc/semeval-2014-absa-restaurant",
+    "lcminhc/p5-embed-v4"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

@@ -31,6 +31,10 @@ class SentimentDataset(Dataset):
         self.use_retrieval = use_retrieval
         self.joint_training = joint_training
 
+    def update_index(self, retriever, store_vectors):
+        self.retriever = retriever
+        self.store_vectors = store_vectors
+
     def __len__(self):
         return len(self.records)
 

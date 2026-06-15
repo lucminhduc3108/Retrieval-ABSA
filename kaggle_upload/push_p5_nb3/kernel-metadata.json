@@ -10,7 +10,8 @@
   "dataset_sources": [
     "lcminhc/p5-nb1-stage1",
     "lcminhc/p5-nb2-stage2",
-    "lcminhc/p5-embed-v4"
+    "lcminhc/p5-embed-v4",
+    "lcminhc/p5-nb2-joint"
   ],
   "competition_sources": [],
   "kernel_sources": []

@@ -20,7 +20,8 @@ class SentimentTrainer:
     def __init__(self, model, optimizer, scheduler, device,
                  patience: int = 5, grad_clip: float = 1.0,
                  log_path: str = "", use_fp16: bool = False,
-                 grad_accum_steps: int = 1, lambda_rank: float = 0.1):
+                 grad_accum_steps: int = 1, lambda_rank: float = 0.1,
+                 rebuild_index_fn=None, rebuild_every: int = 1):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -32,6 +33,8 @@ class SentimentTrainer:
         self.use_fp16 = use_fp16 and device == "cuda"
         self.scaler = GradScaler("cuda") if self.use_fp16 else None
         self.lambda_rank = lambda_rank
+        self.rebuild_index_fn = rebuild_index_fn
+        self.rebuild_every = rebuild_every
 
     def _run_batch(self, batch):
         batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
@@ -96,6 +99,12 @@ class SentimentTrainer:
                     self.optimizer.zero_grad()
 
             avg_loss = total_loss / len(train_loader)
+
+            if (self.rebuild_index_fn is not None
+                    and epoch % self.rebuild_every == 0):
+                logger.info("Epoch %d: rebuilding FAISS index...", epoch)
+                self.rebuild_index_fn()
+
             val_metrics = self.evaluate(val_loader)
             record = {"epoch": epoch, "train_loss": avg_loss, **val_metrics}
             history.append(record)

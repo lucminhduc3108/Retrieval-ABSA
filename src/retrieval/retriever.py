@@ -10,6 +10,13 @@ class Retriever:
         self.top_k = top_k
         self.threshold = threshold
 
+    def rebuild(self, new_vectors: np.ndarray) -> None:
+        vecs = np.ascontiguousarray(new_vectors, dtype="float32")
+        faiss.normalize_L2(vecs)
+        new_index = faiss.IndexFlatIP(vecs.shape[1])
+        new_index.add(vecs)
+        self.index = new_index
+
     def retrieve(self, query_vec: np.ndarray,
                  query_id: str | None = None,
                  exclude_sentence: str | None = None) -> list[dict]:

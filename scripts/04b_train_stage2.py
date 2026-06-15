@@ -190,6 +190,24 @@ def main():
     warmup_steps = int(total_steps * cfg["warmup_ratio"])
     scheduler = get_linear_schedule_with_warmup(optimizer, warmup_steps, total_steps)
 
+    rebuild_index_fn = None
+    if joint_training and use_retrieval:
+        _metadata = metadata
+
+        def _rebuild_index():
+            new_vecs = encode_records(
+                train_recs, model.embedding_model, tokenizer,
+                max_length=128, batch_size=64, device=device)
+            new_retriever = Retriever(
+                build_index(new_vecs), _metadata,
+                top_k=ret_cfg["top_k"], threshold=ret_cfg["threshold"])
+            train_ds.update_index(new_retriever, new_vecs)
+            val_ds.update_index(new_retriever, new_vecs)
+            logger.info("  FAISS rebuilt: %d vectors, dim=%d",
+                        len(new_vecs), new_vecs.shape[1])
+
+        rebuild_index_fn = _rebuild_index
+
     trainer = SentimentTrainer(
         model=model, optimizer=optimizer, scheduler=scheduler,
         device=device, patience=cfg["patience"],
@@ -197,6 +215,8 @@ def main():
         use_fp16=device == "cuda",
         grad_accum_steps=grad_accum,
         lambda_rank=cfg.get("lambda_rank", 0.1),
+        rebuild_index_fn=rebuild_index_fn,
+        rebuild_every=cfg.get("rebuild_every", 1),
     )
 
     ckpt_path = args.ckpt_path or os.path.join(cfg["ckpt_dir"], "best.pt")
