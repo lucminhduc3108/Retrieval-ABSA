@@ -21,7 +21,8 @@ class SentimentTrainer:
                  patience: int = 5, grad_clip: float = 1.0,
                  log_path: str = "", use_fp16: bool = False,
                  grad_accum_steps: int = 1, lambda_rank: float = 0.1,
-                 rebuild_index_fn=None, rebuild_every: int = 1):
+                 rebuild_index_fn=None, rebuild_every: int = 1,
+                 embedding_freeze_epochs: int = 0):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -35,6 +36,7 @@ class SentimentTrainer:
         self.lambda_rank = lambda_rank
         self.rebuild_index_fn = rebuild_index_fn
         self.rebuild_every = rebuild_every
+        self.embedding_freeze_epochs = embedding_freeze_epochs
 
     def _run_batch(self, batch):
         batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
@@ -66,7 +68,17 @@ class SentimentTrainer:
         best_f1 = -1.0
         patience_counter = 0
 
+        emb = getattr(self.model, "embedding_model", None)
+        if self.embedding_freeze_epochs > 0 and emb is not None:
+            emb.requires_grad_(False)
+            logger.info("Embedding frozen for first %d epochs",
+                        self.embedding_freeze_epochs)
+
         for epoch in range(1, epochs + 1):
+            if (self.embedding_freeze_epochs > 0 and emb is not None
+                    and epoch == self.embedding_freeze_epochs + 1):
+                emb.requires_grad_(True)
+                logger.info("Epoch %d: unfreezing embedding model", epoch)
             self.model.train()
             total_loss = 0
             self.optimizer.zero_grad()
@@ -101,7 +113,8 @@ class SentimentTrainer:
             avg_loss = total_loss / len(train_loader)
 
             if (self.rebuild_index_fn is not None
-                    and epoch % self.rebuild_every == 0):
+                    and epoch % self.rebuild_every == 0
+                    and epoch > self.embedding_freeze_epochs):
                 logger.info("Epoch %d: rebuilding FAISS index...", epoch)
                 self.rebuild_index_fn()
 

@@ -217,6 +217,7 @@ def main():
         lambda_rank=cfg.get("lambda_rank", 0.1),
         rebuild_index_fn=rebuild_index_fn,
         rebuild_every=cfg.get("rebuild_every", 1),
+        embedding_freeze_epochs=cfg.get("embedding_freeze_epochs", 0),
     )
 
     ckpt_path = args.ckpt_path or os.path.join(cfg["ckpt_dir"], "best.pt")

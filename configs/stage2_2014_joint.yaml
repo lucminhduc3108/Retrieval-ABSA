@@ -13,7 +13,8 @@ epochs: 20
 encoder_lr: 2.0e-6
 head_lr: 2.0e-4
 retriever_lr: 5.0e-4
-embedding_lr: 1.0e-5
+embedding_lr: 5.0e-7
+embedding_freeze_epochs: 3
 weight_decay: 0.01
 warmup_ratio: 0.1
 max_seq_length: 256
