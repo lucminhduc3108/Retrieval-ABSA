@@ -16,3 +16,5 @@ ckpt_dir: checkpoints/embedding_2014_polonly_s2
 log_path: logs/embedding_2014_polonly_s2.jsonl
 grad_accum_steps: 1
 gradient_checkpointing: true
+num_polarities: 3
+cls_polarity_weight: 1.0
