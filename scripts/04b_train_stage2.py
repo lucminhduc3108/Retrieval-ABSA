@@ -57,7 +57,8 @@ def main():
         grad_ckpt = cfg.get("gradient_checkpointing", False) and joint_training
         embedding_model = ContrastiveEmbedder(
             model_name=cfg["model_name"], proj_dim=256,
-            gradient_checkpointing=grad_ckpt)
+            gradient_checkpointing=grad_ckpt,
+            num_polarities=cfg.get("num_polarities", 0))
         embedding_model.load_state_dict(
             torch.load(args.embedding_ckpt, map_location=device), strict=False)
         embedding_model.to(device)
@@ -218,6 +219,7 @@ def main():
         rebuild_index_fn=rebuild_index_fn,
         rebuild_every=cfg.get("rebuild_every", 1),
         embedding_freeze_epochs=cfg.get("embedding_freeze_epochs", 0),
+        cls_polarity_weight=cfg.get("cls_polarity_weight", 0.0),
     )
 
     ckpt_path = args.ckpt_path or os.path.join(cfg["ckpt_dir"], "best.pt")

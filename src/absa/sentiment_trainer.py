@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from sklearn.metrics import accuracy_score, f1_score
 from torch.amp import GradScaler, autocast
 from torch.nn.utils import clip_grad_norm_
@@ -22,7 +23,8 @@ class SentimentTrainer:
                  log_path: str = "", use_fp16: bool = False,
                  grad_accum_steps: int = 1, lambda_rank: float = 0.1,
                  rebuild_index_fn=None, rebuild_every: int = 1,
-                 embedding_freeze_epochs: int = 0):
+                 embedding_freeze_epochs: int = 0,
+                 cls_polarity_weight: float = 0.0):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -37,6 +39,7 @@ class SentimentTrainer:
         self.rebuild_index_fn = rebuild_index_fn
         self.rebuild_every = rebuild_every
         self.embedding_freeze_epochs = embedding_freeze_epochs
+        self.cls_polarity_weight = cls_polarity_weight
 
     def _run_batch(self, batch):
         batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
@@ -54,12 +57,18 @@ class SentimentTrainer:
                 embed_input_ids=batch.get("embed_input_ids"),
                 embed_attention_mask=batch.get("embed_attention_mask"),
             )
-        # Combined loss: sentiment + lambda_rank * ranking
+        # Combined loss: sentiment + lambda_rank * ranking + cls_polarity_weight * cls
         ranking_loss = out.get("ranking_loss")
         if out["loss"] is not None and ranking_loss is not None:
             out["combined_loss"] = out["loss"] + self.lambda_rank * ranking_loss
         else:
             out["combined_loss"] = out["loss"]
+        emb_cls_logits = out.get("emb_cls_logits")
+        if (emb_cls_logits is not None and self.cls_polarity_weight > 0
+                and out["combined_loss"] is not None):
+            cls_loss = F.cross_entropy(
+                emb_cls_logits, batch["sentiment_label"].to(self.device))
+            out["combined_loss"] = out["combined_loss"] + self.cls_polarity_weight * cls_loss
         return out
 
     def train(self, train_loader, val_loader, epochs: int,

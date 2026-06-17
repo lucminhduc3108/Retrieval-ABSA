@@ -55,10 +55,11 @@ class SentimentPredictor(nn.Module):
         outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
         cls_output = outputs.last_hidden_state[:, 0]
 
+        emb_cls_logits = None
         if (self.embedding_model is not None
                 and embed_input_ids is not None
                 and embed_attention_mask is not None):
-            query_vec = self.embedding_model.encode(
+            query_vec, emb_cls_logits, _ = self.embedding_model._encode_with_heads(
                 embed_input_ids, embed_attention_mask)
 
         ranking_loss = None
@@ -95,4 +96,5 @@ class SentimentPredictor(nn.Module):
         if sentiment_label is not None:
             loss = self.loss_fn(logits, sentiment_label)
 
-        return {"logits": logits, "loss": loss, "ranking_loss": ranking_loss}
+        return {"logits": logits, "loss": loss, "ranking_loss": ranking_loss,
+                "emb_cls_logits": emb_cls_logits}
