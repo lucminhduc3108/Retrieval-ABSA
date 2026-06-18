@@ -15,7 +15,8 @@ class SentimentPredictor(nn.Module):
                  class_weights: torch.Tensor | None = None,
                  margin: float = 0.1, w_mode: str = "full",
                  w_rank: int = 16,
-                 embedding_model: "nn.Module | None" = None):
+                 embedding_model: "nn.Module | None" = None,
+                 aux_label_repr_weight: float = 0.0):
         super().__init__()
         self.embedding_model = embedding_model
         self.encoder = AutoModel.from_pretrained(model_name, dtype=torch.float32)
@@ -46,6 +47,10 @@ class SentimentPredictor(nn.Module):
             nn.Linear(256, num_sent_labels),
         )
         self.loss_fn = nn.CrossEntropyLoss(weight=class_weights)
+
+        self.aux_polarity_head = None
+        if use_retrieval and aux_label_repr_weight > 0:
+            self.aux_polarity_head = nn.Linear(embed_dim, num_sent_labels)
 
     def forward(self, input_ids, attention_mask,
                 neighbor_polarities=None, neighbor_scores=None,
@@ -96,5 +101,9 @@ class SentimentPredictor(nn.Module):
         if sentiment_label is not None:
             loss = self.loss_fn(logits, sentiment_label)
 
+        aux_logits = None
+        if self.aux_polarity_head is not None and self.use_retrieval:
+            aux_logits = self.aux_polarity_head(label_repr)
+
         return {"logits": logits, "loss": loss, "ranking_loss": ranking_loss,
-                "emb_cls_logits": emb_cls_logits}
+                "emb_cls_logits": emb_cls_logits, "aux_logits": aux_logits}

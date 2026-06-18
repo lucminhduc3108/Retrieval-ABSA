@@ -148,6 +148,7 @@ def main():
     rank_margin = cfg.get("rank_margin", 0.1)
     w_mode = cfg.get("w_mode", "full")
     w_rank = cfg.get("w_rank", 16)
+    aux_label_repr_weight = cfg.get("aux_label_repr_weight", 0.0)
     model = SentimentPredictor(
         model_name=cfg["model_name"],
         num_sent_labels=cfg["num_sent_labels"],
@@ -161,6 +162,7 @@ def main():
         w_mode=w_mode,
         w_rank=w_rank,
         embedding_model=embedding_model if joint_training else None,
+        aux_label_repr_weight=aux_label_repr_weight,
     ).to(device)
     if joint_training and cfg.get("gradient_checkpointing", False):
         model.encoder.gradient_checkpointing_enable()
@@ -178,6 +180,9 @@ def main():
     if model.learnable_retriever is not None:
         param_groups.append(
             {"params": list(model.learnable_retriever.parameters()), "lr": retriever_lr})
+    if model.aux_polarity_head is not None:
+        param_groups.append(
+            {"params": list(model.aux_polarity_head.parameters()), "lr": head_lr})
     if joint_training and model.embedding_model is not None:
         embedding_lr = cfg.get("embedding_lr", 1e-5)
         param_groups.append(
@@ -220,6 +225,7 @@ def main():
         rebuild_every=cfg.get("rebuild_every", 1),
         embedding_freeze_epochs=cfg.get("embedding_freeze_epochs", 0),
         cls_polarity_weight=cfg.get("cls_polarity_weight", 0.0),
+        aux_label_repr_weight=aux_label_repr_weight,
     )
 
     ckpt_path = args.ckpt_path or os.path.join(cfg["ckpt_dir"], "best.pt")

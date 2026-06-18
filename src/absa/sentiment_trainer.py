@@ -24,7 +24,8 @@ class SentimentTrainer:
                  grad_accum_steps: int = 1, lambda_rank: float = 0.1,
                  rebuild_index_fn=None, rebuild_every: int = 1,
                  embedding_freeze_epochs: int = 0,
-                 cls_polarity_weight: float = 0.0):
+                 cls_polarity_weight: float = 0.0,
+                 aux_label_repr_weight: float = 0.0):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -40,6 +41,7 @@ class SentimentTrainer:
         self.rebuild_every = rebuild_every
         self.embedding_freeze_epochs = embedding_freeze_epochs
         self.cls_polarity_weight = cls_polarity_weight
+        self.aux_label_repr_weight = aux_label_repr_weight
 
     def _run_batch(self, batch):
         batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
@@ -69,6 +71,13 @@ class SentimentTrainer:
             cls_loss = F.cross_entropy(
                 emb_cls_logits, batch["sentiment_label"].to(self.device))
             out["combined_loss"] = out["combined_loss"] + self.cls_polarity_weight * cls_loss
+        aux_logits = out.get("aux_logits")
+        if (aux_logits is not None and self.aux_label_repr_weight > 0
+                and out["combined_loss"] is not None):
+            aux_loss = F.cross_entropy(
+                aux_logits, batch["sentiment_label"].to(self.device))
+            out["combined_loss"] = out["combined_loss"] + self.aux_label_repr_weight * aux_loss
+            out["aux_loss"] = aux_loss
         return out
 
     def train(self, train_loader, val_loader, epochs: int,
