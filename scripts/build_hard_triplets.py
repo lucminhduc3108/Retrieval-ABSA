@@ -54,6 +54,7 @@ def main():
                              max_length=args.max_length, device=device)
     logger.info("Encoded %d vectors, shape %s", len(vectors), vectors.shape)
 
+    include_neg2 = False
     if args.cross_polarity:
         triplets = build_hard_cross_polarity_triplets(
             train_records, vectors, seed=args.seed)
