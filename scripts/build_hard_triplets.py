@@ -9,7 +9,9 @@ from transformers import AutoTokenizer
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.data.contrastive_builder import build_hard_negative_triplets
+from src.data.contrastive_builder import (
+    build_hard_negative_triplets, build_hard_cross_polarity_triplets)
+
 from src.embedding.model import ContrastiveEmbedder
 from src.retrieval.encoder import encode_records
 from src.utils.io import load_yaml, read_jsonl, write_jsonl
@@ -30,6 +32,8 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--no_neg2", action="store_true",
                         help="Build polarity-only hard triplets (no neg2)")
+    parser.add_argument("--cross_polarity", action="store_true",
+                        help="Build cross-category polarity hard triplets (A2)")
     args = parser.parse_args()
 
     set_seed(args.seed)
@@ -43,17 +47,22 @@ def main():
     logger.info("Loaded embedding: %s", args.embedding_ckpt)
 
     cls_records = read_jsonl(args.cls_path)
-    train_records = [r for r in cls_records if r["split"] == "train"]
+    train_records = [r for r in cls_records if r["split"] in ("train", "mams")]
     logger.info("Train records: %d", len(train_records))
 
     vectors = encode_records(train_records, model, tokenizer,
                              max_length=args.max_length, device=device)
     logger.info("Encoded %d vectors, shape %s", len(vectors), vectors.shape)
 
-    include_neg2 = not args.no_neg2
-    triplets = build_hard_negative_triplets(train_records, vectors, seed=args.seed,
-                                            include_neg2=include_neg2)
-    logger.info("Built %d hard negative triplets (include_neg2=%s)", len(triplets), include_neg2)
+    if args.cross_polarity:
+        triplets = build_hard_cross_polarity_triplets(
+            train_records, vectors, seed=args.seed)
+        logger.info("Built %d hard cross-polarity triplets", len(triplets))
+    else:
+        include_neg2 = not args.no_neg2
+        triplets = build_hard_negative_triplets(train_records, vectors, seed=args.seed,
+                                                include_neg2=include_neg2)
+        logger.info("Built %d hard negative triplets (include_neg2=%s)", len(triplets), include_neg2)
 
     pos_sims = np.array([t["pos_sim"] for t in triplets])
     neg1_sims = np.array([t["neg1_sim"] for t in triplets])

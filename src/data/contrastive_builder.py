@@ -63,6 +63,94 @@ def build_contrastive_triplets(cls_records: list[dict], seed: int = 42,
     return triplets
 
 
+def build_cross_polarity_triplets(cls_records: list[dict],
+                                  seed: int = 42) -> list[dict]:
+    rng = random.Random(seed)
+
+    by_pol = defaultdict(list)
+    for r in cls_records:
+        by_pol[r["polarity"]].append(r)
+
+    triplets = []
+    for anchor in cls_records:
+        a_pol, a_id = anchor["polarity"], anchor["id"]
+
+        pos_candidates = [r for r in by_pol[a_pol] if r["id"] != a_id]
+        if not pos_candidates:
+            continue
+
+        neg_pols = [p for p in by_pol if p != a_pol]
+        neg_candidates = [r for p in neg_pols for r in by_pol[p]]
+        if not neg_candidates:
+            continue
+
+        pos = rng.choice(pos_candidates)
+        neg1 = rng.choice(neg_candidates)
+
+        triplets.append({
+            "anchor_id": a_id, "anchor_sentence": anchor["sentence"],
+            "anchor_aspect": anchor.get("aspect_category", ""),
+            "anchor_polarity": a_pol,
+            "positive_id": pos["id"], "positive_sentence": pos["sentence"],
+            "positive_aspect": pos.get("aspect_category", ""),
+            "positive_polarity": pos["polarity"],
+            "neg1_id": neg1["id"], "neg1_sentence": neg1["sentence"],
+            "neg1_aspect": neg1.get("aspect_category", ""),
+            "neg1_polarity": neg1["polarity"],
+        })
+
+    return triplets
+
+
+def build_hard_cross_polarity_triplets(cls_records: list[dict],
+                                       vectors: np.ndarray,
+                                       seed: int = 42) -> list[dict]:
+    rng = random.Random(seed)
+    sim = vectors @ vectors.T
+
+    by_pol = defaultdict(list)
+    for i, r in enumerate(cls_records):
+        by_pol[r["polarity"]].append(i)
+
+    triplets = []
+    for i, anchor in enumerate(cls_records):
+        a_pol, a_id = anchor["polarity"], anchor["id"]
+
+        pos_indices = [j for j in by_pol[a_pol] if j != i]
+        if not pos_indices:
+            continue
+
+        neg_pols = [p for p in by_pol if p != a_pol]
+        neg_indices = [j for p in neg_pols for j in by_pol[p]]
+        if not neg_indices:
+            continue
+
+        pos_idx = rng.choice(pos_indices)
+        pos_sim_val = float(sim[i, pos_idx])
+
+        neg1_sims = sim[i, neg_indices]
+        neg1_idx = neg_indices[int(np.argmax(neg1_sims))]
+        neg1_sim_val = float(sim[i, neg1_idx])
+
+        pos = cls_records[pos_idx]
+        neg1 = cls_records[neg1_idx]
+
+        triplets.append({
+            "anchor_id": a_id, "anchor_sentence": anchor["sentence"],
+            "anchor_aspect": anchor.get("aspect_category", ""),
+            "anchor_polarity": a_pol,
+            "positive_id": pos["id"], "positive_sentence": pos["sentence"],
+            "positive_aspect": pos.get("aspect_category", ""),
+            "positive_polarity": pos["polarity"],
+            "neg1_id": neg1["id"], "neg1_sentence": neg1["sentence"],
+            "neg1_aspect": neg1.get("aspect_category", ""),
+            "neg1_polarity": neg1["polarity"],
+            "pos_sim": pos_sim_val, "neg1_sim": neg1_sim_val,
+        })
+
+    return triplets
+
+
 def build_hard_negative_triplets(cls_records: list[dict],
                                   vectors: np.ndarray,
                                   seed: int = 42,

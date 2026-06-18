@@ -1,5 +1,16 @@
 from lxml import etree
 
+MAMS_TO_SEMEVAL = {
+    "food": "food",
+    "menu": "food",
+    "ambience": "ambience",
+    "place": "ambience",
+    "service": "service",
+    "staff": "service",
+    "price": "price",
+    "miscellaneous": "anecdotes/miscellaneous",
+}
+
 
 def parse_semeval_xml(path: str) -> list[dict]:
     tree = etree.parse(path)
@@ -21,6 +32,40 @@ def parse_semeval_xml(path: str) -> list[dict]:
                     "polarity": op.get("polarity"),
                     "from_char": int(op.get("from")),
                     "to_char": int(op.get("to")),
+                })
+        results.append({
+            "sentence_id": sid,
+            "text": text,
+            "opinions": opinions,
+        })
+    return results
+
+
+def parse_mams_xml(path: str) -> list[dict]:
+    tree = etree.parse(path)
+    root = tree.getroot()
+    results = []
+    for sentence in root.iter("sentence"):
+        sid = sentence.get("id", f"mams_{len(results)}")
+        text_el = sentence.find("text")
+        text = text_el.text if text_el is not None else ""
+        opinions = []
+        cats_el = sentence.find("aspectCategories")
+        if cats_el is not None:
+            for ac in cats_el.findall("aspectCategory"):
+                pol = ac.get("polarity")
+                if pol == "conflict":
+                    continue
+                cat = ac.get("category")
+                mapped_cat = MAMS_TO_SEMEVAL.get(cat)
+                if mapped_cat is None:
+                    continue
+                opinions.append({
+                    "target": None,
+                    "category": mapped_cat,
+                    "polarity": pol,
+                    "from_char": 0,
+                    "to_char": 0,
                 })
         results.append({
             "sentence_id": sid,

@@ -1,9 +1,13 @@
-MAMS_XML = "data/mams/data/MAMS-ACSA/raw/train.xml"
+MAMS_TRAIN_XML = "data/mams/data/MAMS-ACSA/raw/train.xml"
+MAMS_VAL_XML = "data/mams/data/MAMS-ACSA/raw/val.xml"
 
-SAFE_MAP = {
-    "place": "LOCATION#GENERAL",
-    "miscellaneous": "RESTAURANT#MISCELLANEOUS",
-    "ambience": "AMBIENCE#GENERAL",
-    "service": "SERVICE#GENERAL",
-    "staff": "SERVICE#GENERAL",
+MAMS_TO_SEMEVAL = {
+    "food": "food",
+    "menu": "food",
+    "ambience": "ambience",
+    "place": "ambience",
+    "service": "service",
+    "staff": "service",
+    "price": "price",
+    "miscellaneous": "anecdotes/miscellaneous",
 }
