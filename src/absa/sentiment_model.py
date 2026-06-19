@@ -16,12 +16,14 @@ class SentimentPredictor(nn.Module):
                  margin: float = 0.1, w_mode: str = "full",
                  w_rank: int = 16,
                  embedding_model: "nn.Module | None" = None,
-                 aux_label_repr_weight: float = 0.0):
+                 aux_label_repr_weight: float = 0.0,
+                 retrieval_dropout: float = 0.0):
         super().__init__()
         self.embedding_model = embedding_model
         self.encoder = AutoModel.from_pretrained(model_name, dtype=torch.float32)
         hidden = self.encoder.config.hidden_size
         self.use_retrieval = use_retrieval
+        self.retrieval_dropout = retrieval_dropout
 
         if use_retrieval:
             if use_learnable_retriever:
@@ -91,19 +93,28 @@ class SentimentPredictor(nn.Module):
                         device=cls_output.device)
             else:
                 label_repr = torch.zeros(cls_output.size(0), 64, device=cls_output.device)
+
+            aux_logits = None
+            if self.aux_polarity_head is not None:
+                aux_logits = self.aux_polarity_head(label_repr)
+
+            if self.training and self.retrieval_dropout > 0.0:
+                mask = torch.bernoulli(
+                    torch.full((label_repr.size(0), 1), 1.0 - self.retrieval_dropout,
+                               device=label_repr.device)
+                )
+                label_repr = label_repr * mask
+
             final = torch.cat([cls_output, label_repr], dim=-1)
         else:
             final = cls_output
+            aux_logits = None
 
         logits = self.sentiment_head(final)
 
         loss = None
         if sentiment_label is not None:
             loss = self.loss_fn(logits, sentiment_label)
-
-        aux_logits = None
-        if self.aux_polarity_head is not None and self.use_retrieval:
-            aux_logits = self.aux_polarity_head(label_repr)
 
         return {"logits": logits, "loss": loss, "ranking_loss": ranking_loss,
                 "emb_cls_logits": emb_cls_logits, "aux_logits": aux_logits}

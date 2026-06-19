@@ -149,6 +149,7 @@ def main():
     w_mode = cfg.get("w_mode", "full")
     w_rank = cfg.get("w_rank", 16)
     aux_label_repr_weight = cfg.get("aux_label_repr_weight", 0.0)
+    retrieval_dropout = cfg.get("retrieval_dropout", 0.0)
     model = SentimentPredictor(
         model_name=cfg["model_name"],
         num_sent_labels=cfg["num_sent_labels"],
@@ -163,6 +164,7 @@ def main():
         w_rank=w_rank,
         embedding_model=embedding_model if joint_training else None,
         aux_label_repr_weight=aux_label_repr_weight,
+        retrieval_dropout=retrieval_dropout,
     ).to(device)
     if joint_training and cfg.get("gradient_checkpointing", False):
         model.encoder.gradient_checkpointing_enable()
