@@ -2,6 +2,7 @@ import argparse
 import logging
 import os
 import sys
+from collections import Counter
 
 import torch
 from torch.utils.data import DataLoader
@@ -71,9 +72,24 @@ def decode_categories(logits, strategy, val_logits, val_labels):
     return pred_cats, info
 
 
+def _classify_agreement(valid_pols):
+    n = len(valid_pols)
+    if n == 0:
+        return "no_neighbors"
+    if n == 1:
+        return "single"
+    n_unique = len(set(valid_pols))
+    if n_unique == 1:
+        return "unanimous"
+    if n == 3 and n_unique == 2:
+        return "majority"
+    return "split"
+
+
 def predict_sentiment(model, records, retriever, embedding_model,
                       tokenizer_name, max_length, top_k, device,
-                      use_retrieval, store_vectors=None, batch_size=16):
+                      use_retrieval, store_vectors=None, batch_size=16,
+                      agreement_filter=False, diagnostic_out=None):
     ds = SentimentDataset(
         records, retriever=retriever,
         tokenizer_name=tokenizer_name,
@@ -90,16 +106,63 @@ def predict_sentiment(model, records, retriever, embedding_model,
         for batch in loader:
             batch_gpu = {k: v.to(device) if isinstance(v, torch.Tensor) else v
                          for k, v in batch.items()}
+
+            nb_pols = batch_gpu.get("neighbor_polarities")
+            nb_scores = batch_gpu.get("neighbor_scores")
+            nb_vecs = batch_gpu.get("neighbor_vecs")
+
+            filtered_flags = []
+            if nb_pols is not None and nb_scores is not None:
+                orig_scores_cpu = batch["neighbor_scores"]
+                B = nb_pols.size(0)
+
+                if agreement_filter:
+                    nb_scores = nb_scores.clone()
+                    if nb_vecs is not None:
+                        nb_vecs = nb_vecs.clone()
+
+                for i in range(B):
+                    valid = ~torch.isinf(orig_scores_cpu[i])
+                    valid_pols = nb_pols[i][valid].cpu().tolist()
+                    disagree = len(valid_pols) >= 2 and len(set(valid_pols)) > 1
+                    filtered_flags.append(disagree and agreement_filter)
+
+                    if agreement_filter and disagree:
+                        nb_scores[i] = float("-inf")
+                        if nb_vecs is not None:
+                            nb_vecs[i] = 0
+
             out = model(
                 input_ids=batch_gpu["input_ids"],
                 attention_mask=batch_gpu["attention_mask"],
-                neighbor_polarities=batch_gpu.get("neighbor_polarities"),
-                neighbor_scores=batch_gpu.get("neighbor_scores"),
+                neighbor_polarities=nb_pols,
+                neighbor_scores=nb_scores,
                 query_vec=batch_gpu.get("query_vec"),
-                neighbor_vecs=batch_gpu.get("neighbor_vecs"),
+                neighbor_vecs=nb_vecs,
                 query_polarity=batch_gpu.get("query_polarity"),
             )
             preds = out["logits"].argmax(dim=-1).cpu().tolist()
+
+            if diagnostic_out is not None:
+                batch_start = len(all_preds)
+                orig_pols_cpu = batch.get("neighbor_polarities")
+                orig_scores_cpu = batch.get("neighbor_scores")
+                for j in range(len(preds)):
+                    rec = records[batch_start + j]
+                    if orig_pols_cpu is not None and orig_scores_cpu is not None:
+                        valid = ~torch.isinf(orig_scores_cpu[j])
+                        vpols = orig_pols_cpu[j][valid].tolist()
+                    else:
+                        vpols = []
+                    diagnostic_out.append({
+                        "sentence": rec["sentence"],
+                        "category": rec["category"],
+                        "pred_label": preds[j],
+                        "filtered": filtered_flags[j] if j < len(filtered_flags) else False,
+                        "neighbor_pols": vpols,
+                        "agreement": _classify_agreement(vpols),
+                    })
+
             all_preds.extend(preds)
     return all_preds
 
@@ -127,7 +190,9 @@ def build_gold_pairs(cat_records, sent_records):
 
 def run_joint_eval(pred_cats_list, test_cat, gold_cats_list, gold_pairs_list,
                    s2_model, retriever, embedding_model, store_vectors,
-                   s2_cfg, ret_cfg, use_retrieval, device):
+                   s2_cfg, ret_cfg, use_retrieval, device,
+                   agreement_filter=False, diagnostic_out=None,
+                   gold_by_sent_cat=None):
     stage2_records = []
     for cr, pred_cats in zip(test_cat, pred_cats_list):
         for cat in sorted(pred_cats):
@@ -147,9 +212,16 @@ def run_joint_eval(pred_cats_list, test_cat, gold_cats_list, gold_pairs_list,
             top_k=ret_cfg.get("top_k", 0) if use_retrieval else 0,
             device=device, use_retrieval=use_retrieval,
             store_vectors=store_vectors,
+            agreement_filter=agreement_filter,
+            diagnostic_out=diagnostic_out,
         )
         for rec, pred_idx in zip(stage2_records, sent_preds):
             rec["predicted_polarity"] = ID2POL[pred_idx]
+
+    if diagnostic_out is not None and gold_by_sent_cat is not None:
+        for d in diagnostic_out:
+            d["gold_pol"] = gold_by_sent_cat.get(
+                (d["sentence"], d["category"]))
 
     pred_pairs_list = []
     rec_idx = 0
@@ -209,6 +281,82 @@ def log_sigmoid_stats(logits, label, threshold_info=""):
                      cat, col.mean().item(), col.std().item(), col.max().item())
 
 
+def format_agreement_diagnostic(diag_baseline, diag_filtered):
+    lines = []
+    cc_base = [d for d in diag_baseline if d.get("gold_pol") is not None]
+    cc_filt = [d for d in diag_filtered if d.get("gold_pol") is not None]
+    N = len(cc_base)
+    if N == 0:
+        return "No correct-category samples for diagnostic.\n"
+
+    dist = Counter(d["agreement"] for d in cc_base)
+    n_filtered = sum(1 for d in cc_filt if d["filtered"])
+
+    lines.append("=" * 60)
+    lines.append("AGREEMENT FILTER DIAGNOSTIC")
+    lines.append("=" * 60)
+    lines.append(f"\nAgreement Distribution (N={N} correct-category samples):")
+    for label, key in [("Unanimous (all agree)", "unanimous"),
+                       ("Majority  (2/1)",       "majority"),
+                       ("Split     (all differ)", "split"),
+                       ("Single neighbor",        "single"),
+                       ("No neighbors",           "no_neighbors")]:
+        c = dist.get(key, 0)
+        lines.append(f"  {label:25s}: {c:4d} ({100*c/N:.1f}%)")
+    lines.append(f"\nFilter activated on: {n_filtered}/{N} ({100*n_filtered/N:.1f}%) samples")
+
+    lines.append(f"\nAccuracy by agreement level:")
+    lines.append(f"  {'Agreement':<18s} | {'Count':>5s} | {'Baseline Acc':>12s} | {'Filtered Acc':>12s}")
+    lines.append(f"  {'-'*18}-+-{'-'*5}-+-{'-'*12}-+-{'-'*12}")
+    for label, key in [("Unanimous", "unanimous"), ("Majority", "majority"),
+                       ("Split", "split"), ("Single", "single")]:
+        base_sub = [d for d in cc_base if d["agreement"] == key]
+        filt_sub = [d for d in cc_filt if d["agreement"] == key]
+        if not base_sub:
+            continue
+        b_correct = sum(1 for d in base_sub if d["pred_label"] == POL2ID.get(d["gold_pol"], -1))
+        f_correct = sum(1 for d in filt_sub if d["pred_label"] == POL2ID.get(d["gold_pol"], -1))
+        b_acc = b_correct / len(base_sub)
+        f_acc = f_correct / len(filt_sub) if filt_sub else 0
+        delta = f_acc - b_acc
+        lines.append(f"  {label:<18s} | {len(base_sub):>5d} | {b_acc:>11.1%} | {f_acc:>11.1%}  ({delta:+.1%})")
+
+    lines.append(f"\nPer-polarity accuracy (correct-category only):")
+    lines.append(f"  {'True Pol':<10s} | {'Count':>5s} | {'Baseline':>8s} | {'Filtered':>8s} | {'Delta':>6s}")
+    lines.append(f"  {'-'*10}-+-{'-'*5}-+-{'-'*8}-+-{'-'*8}-+-{'-'*6}")
+    for pol in ["positive", "negative", "neutral"]:
+        pol_id = POL2ID.get(pol)
+        if pol_id is None:
+            continue
+        base_sub = [d for d in cc_base if d["gold_pol"] == pol]
+        filt_sub = [d for d in cc_filt if d["gold_pol"] == pol]
+        if not base_sub:
+            continue
+        b_correct = sum(1 for d in base_sub if d["pred_label"] == pol_id)
+        f_correct = sum(1 for d in filt_sub if d["pred_label"] == pol_id)
+        b_acc = b_correct / len(base_sub)
+        f_acc = f_correct / len(filt_sub) if filt_sub else 0
+        delta = f_acc - b_acc
+        lines.append(f"  {pol:<10s} | {len(base_sub):>5d} | {b_acc:>7.1%} | {f_acc:>7.1%} | {delta:>+5.1%}")
+
+    helped = 0
+    hurt = 0
+    for db, df in zip(cc_base, cc_filt):
+        gold_id = POL2ID.get(db["gold_pol"], -1)
+        base_correct = (db["pred_label"] == gold_id)
+        filt_correct = (df["pred_label"] == gold_id)
+        if not base_correct and filt_correct:
+            helped += 1
+        elif base_correct and not filt_correct:
+            hurt += 1
+    lines.append(f"\nFlip Analysis (filter vs no-filter):")
+    lines.append(f"  Filter helped: {helped} samples (wrong→right)")
+    lines.append(f"  Filter hurt:   {hurt} samples (right→wrong)")
+    lines.append(f"  Net gain:      {helped - hurt:+d} samples")
+
+    return "\n".join(lines) + "\n"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--stage1_ckpt", required=True)
@@ -219,6 +367,7 @@ def main():
     parser.add_argument("--index_dir", default="indexes/")
     parser.add_argument("--retrieval_config", default="configs/retrieval_v2.yaml")
     parser.add_argument("--no_retrieval", action="store_true")
+    parser.add_argument("--agreement_filter", action="store_true")
     parser.add_argument("--pred_strategy", default="all",
                         choices=["all"] + STRATEGIES)
     args = parser.parse_args()
@@ -329,9 +478,13 @@ def main():
     test_logits = collect_logits(s1_model, cat_ds, device)
     log_sigmoid_stats(test_logits, "test")
 
+    gold_by_sent_cat = {(r["sentence"], r["category"]): r["polarity"]
+                        for r in test_sent}
+
     strategies = STRATEGIES if args.pred_strategy == "all" else [args.pred_strategy]
     all_results = {}
     all_reports = []
+    filter_diag_text = ""
 
     for strat in strategies:
         logger.info("--- Strategy: %s ---", strat)
@@ -340,10 +493,54 @@ def main():
         avg_preds = sum(len(s) for s in pred_cats) / max(len(pred_cats), 1)
         logger.info("[%s] %s, avg predicted cats/sentence: %.2f", strat, info, avg_preds)
 
-        cat_m, joint_m, sent_cond, per_cat = run_joint_eval(
-            pred_cats, test_cat, gold_cats_list, gold_pairs_list,
-            s2_model, retriever, embedding_model, store_vectors,
-            s2_cfg, ret_cfg, use_retrieval, device)
+        if args.agreement_filter and use_retrieval:
+            diag_baseline = []
+            cat_m_base, joint_m_base, sent_cond_base, per_cat_base = run_joint_eval(
+                pred_cats, test_cat, gold_cats_list, gold_pairs_list,
+                s2_model, retriever, embedding_model, store_vectors,
+                s2_cfg, ret_cfg, use_retrieval, device,
+                agreement_filter=False, diagnostic_out=diag_baseline,
+                gold_by_sent_cat=gold_by_sent_cat)
+
+            diag_filtered = []
+            cat_m, joint_m, sent_cond, per_cat = run_joint_eval(
+                pred_cats, test_cat, gold_cats_list, gold_pairs_list,
+                s2_model, retriever, embedding_model, store_vectors,
+                s2_cfg, ret_cfg, use_retrieval, device,
+                agreement_filter=True, diagnostic_out=diag_filtered,
+                gold_by_sent_cat=gold_by_sent_cat)
+
+            filter_diag_text = format_agreement_diagnostic(
+                diag_baseline, diag_filtered)
+
+            logger.info("[%s] BASELINE  : Joint F1=%.4f, Sent Acc|CC=%.4f",
+                        strat, joint_m_base["f1"], sent_cond_base["accuracy"])
+            logger.info("[%s] FILTERED  : Joint F1=%.4f, Sent Acc|CC=%.4f",
+                        strat, joint_m["f1"], sent_cond["accuracy"])
+
+            comp_lines = []
+            comp_lines.append("\n## Filter Comparison\n")
+            comp_lines.append("| Metric | No Filter | With Filter | Delta |")
+            comp_lines.append("|--------|-----------|-------------|-------|")
+            for label, key_j, key_s in [
+                ("Joint F1", "f1", None),
+                ("Sent Acc|CC", None, "accuracy"),
+                ("Sent MacF1|CC", None, "macro_f1"),
+            ]:
+                if key_j:
+                    v_b, v_f = joint_m_base[key_j], joint_m[key_j]
+                else:
+                    v_b, v_f = sent_cond_base[key_s], sent_cond[key_s]
+                delta = v_f - v_b
+                comp_lines.append(
+                    f"| {label} | {v_b:.4f} | {v_f:.4f} | {delta:+.4f} |")
+            filter_comp_text = "\n".join(comp_lines)
+            all_reports.append(filter_comp_text)
+        else:
+            cat_m, joint_m, sent_cond, per_cat = run_joint_eval(
+                pred_cats, test_cat, gold_cats_list, gold_pairs_list,
+                s2_model, retriever, embedding_model, store_vectors,
+                s2_cfg, ret_cfg, use_retrieval, device)
 
         all_results[strat] = {
             "cat_f1": cat_m["f1"], "cat_p": cat_m["precision"], "cat_r": cat_m["recall"],
@@ -378,12 +575,27 @@ def main():
         if not report.startswith("\n#"):
             print("\n" + report)
 
-    tag = "noret" if args.no_retrieval else "retrieval"
+    if filter_diag_text:
+        print("\n" + filter_diag_text)
+        all_reports.append(filter_diag_text)
+
+    if args.agreement_filter:
+        tag = "filter"
+    elif args.no_retrieval:
+        tag = "noret"
+    else:
+        tag = "retrieval"
     out_path = f"logs/joint_eval_{tag}.md"
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
         f.write("\n\n".join(all_reports))
     logger.info("Results saved to %s", out_path)
+
+    if filter_diag_text:
+        diag_path = "logs/agreement_diagnostic.md"
+        with open(diag_path, "w") as f:
+            f.write(filter_diag_text)
+        logger.info("Diagnostic saved to %s", diag_path)
 
 
 if __name__ == "__main__":
