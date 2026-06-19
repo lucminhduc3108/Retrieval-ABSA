@@ -184,6 +184,8 @@ def format_report(cat_m, joint_m, sent_cond, per_cat, strategy=None):
     report.append(f"| Joint R | {joint_m['recall']:.4f} |")
     report.append(f"| Joint F1 | {joint_m['f1']:.4f} |")
     report.append(f"| Sent Acc|Correct Cat | {sent_cond['accuracy']:.4f} ({sent_cond['correct']}/{sent_cond['total']}) |")
+    report.append(f"| Sent Macro F1|CC | {sent_cond['macro_f1']:.4f} |")
+    report.append(f"| Sent Macro R|CC | {sent_cond['macro_recall']:.4f} |")
     report.append("")
     report.append("## Per-Category F1\n")
     report.append("| Category | P | R | F1 | Support |")
@@ -347,23 +349,26 @@ def main():
             "cat_f1": cat_m["f1"], "cat_p": cat_m["precision"], "cat_r": cat_m["recall"],
             "joint_f1": joint_m["f1"], "joint_p": joint_m["precision"], "joint_r": joint_m["recall"],
             "sent_acc": sent_cond["accuracy"],
+            "sent_macro_f1": sent_cond["macro_f1"],
+            "sent_macro_recall": sent_cond["macro_recall"],
             "sent_correct": sent_cond["correct"], "sent_total": sent_cond["total"],
             "avg_preds": avg_preds, "info": info,
         }
         report = format_report(cat_m, joint_m, sent_cond, per_cat, strategy=strat)
         all_reports.append(report)
-        logger.info("[%s] Cat F1=%.4f, Joint F1=%.4f, Sent Acc|CC=%.4f",
-                    strat, cat_m["f1"], joint_m["f1"], sent_cond["accuracy"])
+        logger.info("[%s] Cat F1=%.4f, Joint F1=%.4f, Sent Acc|CC=%.4f, Sent MacF1|CC=%.4f",
+                    strat, cat_m["f1"], joint_m["f1"], sent_cond["accuracy"], sent_cond["macro_f1"])
 
     # --- Print comparison table if multiple strategies ---
     if len(strategies) > 1:
         comp = ["\n# Strategy Comparison\n"]
-        comp.append("| Strategy | Cat P | Cat R | Cat F1 | Joint F1 | Sent Acc|CC | Avg Preds | Config |")
-        comp.append("|----------|-------|-------|--------|----------|-----------|-----------|--------|")
+        comp.append("| Strategy | Cat P | Cat R | Cat F1 | Joint F1 | Sent Acc|CC | Sent MacF1|CC | Sent MacR|CC | Avg Preds | Config |")
+        comp.append("|----------|-------|-------|--------|----------|-----------|---------------|--------------|-----------|--------|")
         for strat in strategies:
             r = all_results[strat]
             comp.append(f"| {strat} | {r['cat_p']:.4f} | {r['cat_r']:.4f} | {r['cat_f1']:.4f} "
                         f"| {r['joint_f1']:.4f} | {r['sent_acc']:.4f} ({r['sent_correct']}/{r['sent_total']}) "
+                        f"| {r['sent_macro_f1']:.4f} | {r['sent_macro_recall']:.4f} "
                         f"| {r['avg_preds']:.2f} | {r['info']} |")
         comp_text = "\n".join(comp)
         print(comp_text)

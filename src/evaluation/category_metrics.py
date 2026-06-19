@@ -1,4 +1,4 @@
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score, recall_score
 
 
 def category_f1(pred_cats_list: list[set[str]],
@@ -57,6 +57,8 @@ def sentiment_acc_given_correct_category(
 ) -> dict:
     correct = 0
     total = 0
+    y_true = []
+    y_pred = []
     for pred_pairs, gold_pairs in zip(pred_pairs_list, gold_pairs_list):
         gold_by_cat: dict[str, set[str]] = {}
         for gc, gp in gold_pairs:
@@ -64,7 +66,14 @@ def sentiment_acc_given_correct_category(
         for cat, pol in pred_pairs:
             if cat in gold_by_cat:
                 total += 1
-                if pol in gold_by_cat[cat]:
+                gold_pols = gold_by_cat[cat]
+                gold_pol = list(gold_pols)[0]
+                y_true.append(gold_pol)
+                y_pred.append(pol)
+                if pol in gold_pols:
                     correct += 1
     acc = correct / total if total else 0.0
-    return {"accuracy": acc, "correct": correct, "total": total}
+    macro_f1 = f1_score(y_true, y_pred, average="macro", zero_division=0) if total else 0.0
+    macro_recall = recall_score(y_true, y_pred, average="macro", zero_division=0) if total else 0.0
+    return {"accuracy": acc, "macro_f1": float(macro_f1), "macro_recall": float(macro_recall), 
+            "correct": correct, "total": total}
