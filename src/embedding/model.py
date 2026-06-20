@@ -23,17 +23,28 @@ class ContrastiveEmbedder(nn.Module):
                  gradient_checkpointing: bool = False,
                  num_polarities: int = 0,
                  proj_num_polarities: int = 0,
-                 use_attention_pool: bool = False):
+                 use_attention_pool: bool = False,
+                 proj_depth: int = 1):
         super().__init__()
         self.encoder = AutoModel.from_pretrained(model_name, dtype=torch.float32)
         if gradient_checkpointing:
             self.encoder.gradient_checkpointing_enable()
         hidden = self.encoder.config.hidden_size
-        self.projection = nn.Sequential(
-            nn.Linear(hidden, proj_dim),
-            nn.GELU(),
-            nn.LayerNorm(proj_dim),
-        )
+        if proj_depth >= 2:
+            self.projection = nn.Sequential(
+                nn.Linear(hidden, 512),
+                nn.GELU(),
+                nn.LayerNorm(512),
+                nn.Linear(512, proj_dim),
+                nn.GELU(),
+                nn.LayerNorm(proj_dim),
+            )
+        else:
+            self.projection = nn.Sequential(
+                nn.Linear(hidden, proj_dim),
+                nn.GELU(),
+                nn.LayerNorm(proj_dim),
+            )
         self.cls_head = nn.Linear(hidden, num_polarities) if num_polarities > 0 else None
         self.proj_head = nn.Linear(proj_dim, proj_num_polarities) if proj_num_polarities > 0 else None
         self.pool = SentimentAttentionPool(hidden) if use_attention_pool else None

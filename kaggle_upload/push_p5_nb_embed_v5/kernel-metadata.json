@@ -1,0 +1,15 @@
+{
+  "id": "duclm318/p5-nb-embed-v5-train",
+  "title": "P5 NB Embed V5 Train",
+  "code_file": "p5_nb_embed_v5.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "duclm318/semeval-2014-absa-restaurant"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

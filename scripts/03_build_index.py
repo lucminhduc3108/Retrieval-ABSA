@@ -28,13 +28,16 @@ def main():
     parser.add_argument("--proj_dim", type=int, default=256)
     parser.add_argument("--max_seq_length", type=int, default=128)
     parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--proj_depth", type=int, default=1,
+                        help="Projection head depth (1=shallow, 2=deep)")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info("Device: %s", device)
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = ContrastiveEmbedder(model_name=args.model_name, proj_dim=args.proj_dim)
+    model = ContrastiveEmbedder(model_name=args.model_name, proj_dim=args.proj_dim,
+                                proj_depth=args.proj_depth)
     model.load_state_dict(torch.load(args.embedding_ckpt, map_location=device), strict=False)
     model.to(device)
     model.eval()

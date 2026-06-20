@@ -34,13 +34,16 @@ def main():
                         help="Build polarity-only hard triplets (no neg2)")
     parser.add_argument("--cross_polarity", action="store_true",
                         help="Build cross-category polarity hard triplets (A2)")
+    parser.add_argument("--proj_depth", type=int, default=1,
+                        help="Projection head depth (1=shallow, 2=deep)")
     args = parser.parse_args()
 
     set_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = ContrastiveEmbedder(model_name=args.model_name, proj_dim=args.proj_dim)
+    model = ContrastiveEmbedder(model_name=args.model_name, proj_dim=args.proj_dim,
+                                proj_depth=args.proj_depth)
     model.load_state_dict(torch.load(args.embedding_ckpt, map_location=device), strict=False)
     model.to(device)
     model.eval()

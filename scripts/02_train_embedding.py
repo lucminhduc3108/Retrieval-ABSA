@@ -54,6 +54,7 @@ def main():
         num_polarities=cfg.get("num_polarities", 0),
         proj_num_polarities=cfg.get("proj_num_polarities", 0),
         use_attention_pool=cfg.get("use_attention_pool", False),
+        proj_depth=cfg.get("proj_depth", 1),
     ).to(device)
 
     if args.resume_from:
