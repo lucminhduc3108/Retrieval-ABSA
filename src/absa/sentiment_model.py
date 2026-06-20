@@ -6,6 +6,21 @@ from src.absa.label_interpolation import LabelInterpolation
 from src.absa.learnable_retriever import LearnableRetriever
 
 
+class RetrievalGate(nn.Module):
+    def __init__(self, hidden: int = 768, embed_dim: int = 64):
+        super().__init__()
+        self.gate = nn.Linear(hidden + embed_dim + 1, 1)
+        nn.init.zeros_(self.gate.weight)
+        nn.init.constant_(self.gate.bias, 0.847)
+
+    def forward(self, cls_output: torch.Tensor,
+                label_repr: torch.Tensor,
+                mean_score: torch.Tensor) -> torch.Tensor:
+        gate_input = torch.cat(
+            [cls_output, label_repr, mean_score.unsqueeze(-1)], dim=-1)
+        return torch.sigmoid(self.gate(gate_input))
+
+
 class SentimentPredictor(nn.Module):
     def __init__(self, model_name: str = "microsoft/deberta-v3-base",
                  num_sent_labels: int = 3,
@@ -17,7 +32,8 @@ class SentimentPredictor(nn.Module):
                  w_rank: int = 16,
                  embedding_model: "nn.Module | None" = None,
                  aux_label_repr_weight: float = 0.0,
-                 retrieval_dropout: float = 0.0):
+                 retrieval_dropout: float = 0.0,
+                 use_gate: bool = False):
         super().__init__()
         self.embedding_model = embedding_model
         self.encoder = AutoModel.from_pretrained(model_name, dtype=torch.float32)
@@ -54,6 +70,12 @@ class SentimentPredictor(nn.Module):
         if use_retrieval and aux_label_repr_weight > 0:
             self.aux_polarity_head = nn.Linear(embed_dim, num_sent_labels)
 
+        self.use_gate = use_gate and use_retrieval
+        self.retrieval_gate = None
+        if self.use_gate:
+            self.retrieval_gate = RetrievalGate(
+                hidden=self.encoder.config.hidden_size, embed_dim=embed_dim)
+
     def forward(self, input_ids, attention_mask,
                 neighbor_polarities=None, neighbor_scores=None,
                 query_vec=None, neighbor_vecs=None, query_polarity=None,
@@ -70,6 +92,7 @@ class SentimentPredictor(nn.Module):
                 embed_input_ids, embed_attention_mask)
 
         ranking_loss = None
+        gate_alpha = None
 
         if self.use_retrieval:
             if self.learnable_retriever is not None:
@@ -98,7 +121,19 @@ class SentimentPredictor(nn.Module):
             if self.aux_polarity_head is not None:
                 aux_logits = self.aux_polarity_head(label_repr)
 
-            if self.training and self.retrieval_dropout > 0.0:
+            if self.retrieval_gate is not None:
+                if neighbor_scores is not None:
+                    is_pad = torch.isinf(neighbor_scores) & (neighbor_scores < 0)
+                    safe = neighbor_scores.masked_fill(is_pad, 0.0)
+                    valid = (~is_pad).float()
+                    count = valid.sum(dim=1).clamp(min=1.0)
+                    mean_score = (safe * valid).sum(dim=1) / count
+                else:
+                    mean_score = torch.zeros(
+                        cls_output.size(0), device=cls_output.device)
+                gate_alpha = self.retrieval_gate(cls_output, label_repr, mean_score)
+                label_repr = gate_alpha * label_repr
+            elif self.training and self.retrieval_dropout > 0.0:
                 mask = torch.bernoulli(
                     torch.full((label_repr.size(0), 1), 1.0 - self.retrieval_dropout,
                                device=label_repr.device)
@@ -117,4 +152,5 @@ class SentimentPredictor(nn.Module):
             loss = self.loss_fn(logits, sentiment_label)
 
         return {"logits": logits, "loss": loss, "ranking_loss": ranking_loss,
-                "emb_cls_logits": emb_cls_logits, "aux_logits": aux_logits}
+                "emb_cls_logits": emb_cls_logits, "aux_logits": aux_logits,
+                "gate_alpha": gate_alpha}

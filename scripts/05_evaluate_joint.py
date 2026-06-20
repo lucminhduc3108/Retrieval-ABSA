@@ -459,6 +459,7 @@ def main():
         margin=s2_cfg.get("rank_margin", 0.1),
         w_mode=s2_cfg.get("w_mode", "full"),
         w_rank=s2_cfg.get("w_rank", 16),
+        use_gate=s2_cfg.get("use_gate", False),
     ).to(device)
     s2_state = torch.load(args.stage2_ckpt, map_location=device)
     s2_model.load_state_dict(s2_state, strict=False)

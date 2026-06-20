@@ -150,6 +150,7 @@ def main():
     w_rank = cfg.get("w_rank", 16)
     aux_label_repr_weight = cfg.get("aux_label_repr_weight", 0.0)
     retrieval_dropout = cfg.get("retrieval_dropout", 0.0)
+    use_gate = cfg.get("use_gate", False)
     model = SentimentPredictor(
         model_name=cfg["model_name"],
         num_sent_labels=cfg["num_sent_labels"],
@@ -165,6 +166,7 @@ def main():
         embedding_model=embedding_model if joint_training else None,
         aux_label_repr_weight=aux_label_repr_weight,
         retrieval_dropout=retrieval_dropout,
+        use_gate=use_gate,
     ).to(device)
     if joint_training and cfg.get("gradient_checkpointing", False):
         model.encoder.gradient_checkpointing_enable()
@@ -185,6 +187,9 @@ def main():
     if model.aux_polarity_head is not None:
         param_groups.append(
             {"params": list(model.aux_polarity_head.parameters()), "lr": head_lr})
+    if model.retrieval_gate is not None:
+        param_groups.append(
+            {"params": list(model.retrieval_gate.parameters()), "lr": head_lr})
     if joint_training and model.embedding_model is not None:
         embedding_lr = cfg.get("embedding_lr", 1e-5)
         param_groups.append(
