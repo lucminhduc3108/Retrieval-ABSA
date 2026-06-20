@@ -33,13 +33,17 @@ class SentimentPredictor(nn.Module):
                  embedding_model: "nn.Module | None" = None,
                  aux_label_repr_weight: float = 0.0,
                  retrieval_dropout: float = 0.0,
-                 use_gate: bool = False):
+                 use_gate: bool = False,
+                 use_two_head: bool = False,
+                 ret_lambda: float = 0.2):
         super().__init__()
         self.embedding_model = embedding_model
         self.encoder = AutoModel.from_pretrained(model_name, dtype=torch.float32)
         hidden = self.encoder.config.hidden_size
         self.use_retrieval = use_retrieval
         self.retrieval_dropout = retrieval_dropout
+        self.use_two_head = use_two_head and use_retrieval
+        self.ret_lambda = ret_lambda
 
         if use_retrieval:
             if use_learnable_retriever:
@@ -52,7 +56,10 @@ class SentimentPredictor(nn.Module):
                 self.label_interp = LabelInterpolation(
                     num_labels=num_sent_labels, embed_dim=embed_dim, tau=tau)
                 self.learnable_retriever = None
-            input_dim = hidden + embed_dim
+            if self.use_two_head:
+                input_dim = hidden
+            else:
+                input_dim = hidden + embed_dim
         else:
             self.label_interp = None
             self.learnable_retriever = None
@@ -66,8 +73,12 @@ class SentimentPredictor(nn.Module):
         )
         self.loss_fn = nn.CrossEntropyLoss(weight=class_weights)
 
+        self.ret_head = None
+        if self.use_two_head:
+            self.ret_head = nn.Linear(embed_dim, num_sent_labels)
+
         self.aux_polarity_head = None
-        if use_retrieval and aux_label_repr_weight > 0:
+        if use_retrieval and aux_label_repr_weight > 0 and not self.use_two_head:
             self.aux_polarity_head = nn.Linear(embed_dim, num_sent_labels)
 
         self.use_gate = use_gate and use_retrieval
@@ -121,31 +132,36 @@ class SentimentPredictor(nn.Module):
             if self.aux_polarity_head is not None:
                 aux_logits = self.aux_polarity_head(label_repr)
 
-            if self.retrieval_gate is not None:
-                if neighbor_scores is not None:
-                    is_pad = torch.isinf(neighbor_scores) & (neighbor_scores < 0)
-                    safe = neighbor_scores.masked_fill(is_pad, 0.0)
-                    valid = (~is_pad).float()
-                    count = valid.sum(dim=1).clamp(min=1.0)
-                    mean_score = (safe * valid).sum(dim=1) / count
-                else:
-                    mean_score = torch.zeros(
-                        cls_output.size(0), device=cls_output.device)
-                gate_alpha = self.retrieval_gate(cls_output, label_repr, mean_score)
-                label_repr = gate_alpha * label_repr
-            elif self.training and self.retrieval_dropout > 0.0:
-                mask = torch.bernoulli(
-                    torch.full((label_repr.size(0), 1), 1.0 - self.retrieval_dropout,
-                               device=label_repr.device)
-                )
-                label_repr = label_repr * mask
+            if self.use_two_head:
+                ret_logits = self.ret_head(label_repr)
+                aux_logits = ret_logits
+                logits = self.sentiment_head(cls_output) + self.ret_lambda * ret_logits
+            else:
+                if self.retrieval_gate is not None:
+                    if neighbor_scores is not None:
+                        is_pad = torch.isinf(neighbor_scores) & (neighbor_scores < 0)
+                        safe = neighbor_scores.masked_fill(is_pad, 0.0)
+                        valid = (~is_pad).float()
+                        count = valid.sum(dim=1).clamp(min=1.0)
+                        mean_score = (safe * valid).sum(dim=1) / count
+                    else:
+                        mean_score = torch.zeros(
+                            cls_output.size(0), device=cls_output.device)
+                    gate_alpha = self.retrieval_gate(cls_output, label_repr, mean_score)
+                    label_repr = gate_alpha * label_repr
+                elif self.training and self.retrieval_dropout > 0.0:
+                    mask = torch.bernoulli(
+                        torch.full((label_repr.size(0), 1), 1.0 - self.retrieval_dropout,
+                                   device=label_repr.device)
+                    )
+                    label_repr = label_repr * mask
 
-            final = torch.cat([cls_output, label_repr], dim=-1)
+                final = torch.cat([cls_output, label_repr], dim=-1)
+                logits = self.sentiment_head(final)
         else:
             final = cls_output
             aux_logits = None
-
-        logits = self.sentiment_head(final)
+            logits = self.sentiment_head(final)
 
         loss = None
         if sentiment_label is not None:
@@ -153,4 +169,4 @@ class SentimentPredictor(nn.Module):
 
         return {"logits": logits, "loss": loss, "ranking_loss": ranking_loss,
                 "emb_cls_logits": emb_cls_logits, "aux_logits": aux_logits,
-                "gate_alpha": gate_alpha}
+                "gate_alpha": gate_alpha, "ret_logits": ret_logits if self.use_two_head else None}

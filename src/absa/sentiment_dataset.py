@@ -1,4 +1,5 @@
 import logging
+import random
 
 import numpy as np
 import torch
@@ -19,7 +20,8 @@ class SentimentDataset(Dataset):
                  store_vectors: "np.ndarray | None" = None,
                  max_length: int = 256, top_k: int = 2,
                  device: str = "cpu", use_retrieval: bool = True,
-                 joint_training: bool = False):
+                 joint_training: bool = False,
+                 neighbor_flip_prob: float = 0.0):
         self.records = records
         self.retriever = retriever
         self.embedding_model = embedding_model
@@ -30,6 +32,7 @@ class SentimentDataset(Dataset):
         self.device = device
         self.use_retrieval = use_retrieval
         self.joint_training = joint_training
+        self.neighbor_flip_prob = neighbor_flip_prob
 
     def update_index(self, retriever, store_vectors):
         self.retriever = retriever
@@ -107,6 +110,12 @@ class SentimentDataset(Dataset):
             else:
                 pol_ids = []
                 scores = []
+
+            if self.neighbor_flip_prob > 0:
+                for i in range(len(pol_ids)):
+                    if random.random() < self.neighbor_flip_prob:
+                        others = [p for p in range(3) if p != pol_ids[i]]
+                        pol_ids[i] = random.choice(others)
 
             # Pad to top_k; use -inf so softmax gives zero weight to padding
             while len(pol_ids) < self.top_k:

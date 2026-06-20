@@ -1,0 +1,16 @@
+{
+  "id": "lcminhc/p5-nb2-twohead",
+  "title": "P5 NB2 Two-Head",
+  "code_file": "p5_nb2_twohead.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "duclm318/semeval-2014-absa-restaurant",
+    "duclm318/p5-embed-v4"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

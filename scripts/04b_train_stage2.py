@@ -117,6 +117,10 @@ def main():
                 cls_weights[0], cls_weights[1], cls_weights[2])
     class_weights_tensor = torch.tensor(cls_weights, dtype=torch.float32).to(device)
 
+    neighbor_flip_prob = cfg.get("neighbor_flip_prob", 0.0)
+    if neighbor_flip_prob > 0:
+        logger.info("Neighbor perturbation: flip_prob=%.2f (train only)", neighbor_flip_prob)
+
     ds_kwargs = dict(
         retriever=retriever,
         tokenizer_name=cfg["model_name"],
@@ -129,7 +133,7 @@ def main():
         joint_training=joint_training,
     )
 
-    train_ds = SentimentDataset(train_recs, **ds_kwargs)
+    train_ds = SentimentDataset(train_recs, neighbor_flip_prob=neighbor_flip_prob, **ds_kwargs)
     val_ds = SentimentDataset(val_recs, **ds_kwargs)
 
     if embedding_model is not None and not joint_training:
@@ -151,6 +155,8 @@ def main():
     aux_label_repr_weight = cfg.get("aux_label_repr_weight", 0.0)
     retrieval_dropout = cfg.get("retrieval_dropout", 0.0)
     use_gate = cfg.get("use_gate", False)
+    use_two_head = cfg.get("use_two_head", False)
+    ret_lambda = cfg.get("ret_lambda", 0.2)
     model = SentimentPredictor(
         model_name=cfg["model_name"],
         num_sent_labels=cfg["num_sent_labels"],
@@ -167,6 +173,8 @@ def main():
         aux_label_repr_weight=aux_label_repr_weight,
         retrieval_dropout=retrieval_dropout,
         use_gate=use_gate,
+        use_two_head=use_two_head,
+        ret_lambda=ret_lambda,
     ).to(device)
     if joint_training and cfg.get("gradient_checkpointing", False):
         model.encoder.gradient_checkpointing_enable()
@@ -187,6 +195,9 @@ def main():
     if model.aux_polarity_head is not None:
         param_groups.append(
             {"params": list(model.aux_polarity_head.parameters()), "lr": head_lr})
+    if model.ret_head is not None:
+        param_groups.append(
+            {"params": list(model.ret_head.parameters()), "lr": head_lr})
     if model.retrieval_gate is not None:
         param_groups.append(
             {"params": list(model.retrieval_gate.parameters()), "lr": head_lr})

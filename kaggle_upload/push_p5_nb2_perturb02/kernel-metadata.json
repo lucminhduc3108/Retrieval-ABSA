@@ -1,0 +1,16 @@
+{
+  "id": "duclm318/p5-nb2-perturb02",
+  "title": "P5 NB2 Perturbation 0.2",
+  "code_file": "p5_nb2_perturb02.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "duclm318/semeval-2014-absa-restaurant",
+    "duclm318/p5-embed-v4"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}
