@@ -1,0 +1,13 @@
+{
+  "id": "duclm318/p5-nb1-stage1-mams",
+  "title": "P5 NB1 Stage1 MAMS",
+  "code_file": "p5_nb1_stage1_mams.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": []
+}

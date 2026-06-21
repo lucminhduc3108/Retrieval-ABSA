@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.absa.category_dataset import CategoryDataset
 from src.absa.category_model import CategoryDetector
 from src.absa.category_trainer import CategoryTrainer
-from src.data.category_builder import CATEGORY_LIST, NUM_CATEGORIES
+from src.data.category_builder import CATEGORY_LIST, NUM_CATEGORIES, get_category_config
 from src.utils.io import load_yaml, read_jsonl
 from src.utils.seed import set_seed
 
@@ -23,9 +23,10 @@ logger = logging.getLogger(__name__)
 
 
 def compute_pos_weight(records: list[dict],
+                       num_categories: int = NUM_CATEGORIES,
                        cap: float | None = None) -> torch.Tensor:
     n = len(records)
-    counts = [0] * NUM_CATEGORIES
+    counts = [0] * num_categories
     for r in records:
         for i, v in enumerate(r["category_vector"]):
             counts[i] += v
@@ -53,6 +54,10 @@ def main():
     set_seed(cfg["seed"])
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info("Device: %s", device)
+
+    cat_list_name = cfg.get("category_list_name", "semeval2014")
+    category_list, _, num_cat = get_category_config(cat_list_name)
+    logger.info("Category list: %s (%d categories)", cat_list_name, num_cat)
 
     records = read_jsonl(cfg["category_path"])
     train_records = [r for r in records if r["split"] == "train"]
@@ -92,7 +97,8 @@ def main():
         pos_weight = None
         logger.info("pos_weight: disabled")
     else:
-        pos_weight = compute_pos_weight(train_records, cap=pw_cap).to(device)
+        pos_weight = compute_pos_weight(train_records, num_categories=num_cat,
+                                        cap=pw_cap).to(device)
         logger.info("pos_weight (cap=%.1f): %s",
                     pw_cap, [f"{w:.2f}" for w in pos_weight.tolist()])
     if use_asl:
@@ -141,6 +147,7 @@ def main():
         device=device, patience=cfg["patience"],
         grad_clip=cfg["grad_clip"], log_path=cfg["log_path"],
         use_fp16=use_fp16, grad_accum_steps=grad_accum,
+        category_list=category_list,
     )
     trainer.train(train_loader, val_loader, epochs=epochs, ckpt_path=ckpt_path)
 

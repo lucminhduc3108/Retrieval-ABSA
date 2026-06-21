@@ -19,8 +19,9 @@ THRESHOLD_GRID = [round(0.05 + i * 0.05, 2) for i in range(18)]  # 0.05 to 0.90
 def _tune_thresholds(all_logits: torch.Tensor,
                      all_labels: torch.Tensor) -> list[float]:
     probs = torch.sigmoid(all_logits)
-    best_thresholds = [0.5] * NUM_CATEGORIES
-    for cat_idx in range(NUM_CATEGORIES):
+    n_cats = all_logits.size(1)
+    best_thresholds = [0.5] * n_cats
+    for cat_idx in range(n_cats):
         best_f1 = -1.0
         gold_col = all_labels[:, cat_idx]
         pred_col = probs[:, cat_idx]
@@ -39,14 +40,15 @@ def _tune_thresholds(all_logits: torch.Tensor,
 
 
 def _apply_thresholds(logits: torch.Tensor,
-                      thresholds: list[float]) -> list[set[str]]:
+                      thresholds: list[float],
+                      category_list: list[str] = CATEGORY_LIST) -> list[set[str]]:
     probs = torch.sigmoid(logits)
     result = []
     for i in range(probs.size(0)):
         cats = set()
-        for j in range(NUM_CATEGORIES):
+        for j in range(len(category_list)):
             if probs[i, j] >= thresholds[j]:
-                cats.add(CATEGORY_LIST[j])
+                cats.add(category_list[j])
         result.append(cats)
     return result
 
@@ -72,32 +74,35 @@ def _tune_global_threshold(all_logits: torch.Tensor,
 
 def _apply_global_threshold(logits: torch.Tensor,
                             threshold: float,
-                            k_max: int = 5) -> list[set[str]]:
+                            k_max: int = 5,
+                            category_list: list[str] = CATEGORY_LIST) -> list[set[str]]:
     probs = torch.sigmoid(logits)
+    n_cats = probs.size(1)
     result = []
     for i in range(probs.size(0)):
-        above = [(j, probs[i, j].item()) for j in range(NUM_CATEGORIES)
+        above = [(j, probs[i, j].item()) for j in range(n_cats)
                  if probs[i, j] >= threshold]
         if len(above) > k_max:
             above.sort(key=lambda x: x[1], reverse=True)
             above = above[:k_max]
-        result.append({CATEGORY_LIST[j] for j, _ in above})
+        result.append({category_list[j] for j, _ in above})
     return result
 
 
 def tune_topk(all_logits: torch.Tensor,
               all_labels: torch.Tensor,
-              k_range: range = _TOPK_RANGE) -> int:
+              k_range: range = _TOPK_RANGE,
+              category_list: list[str] = CATEGORY_LIST) -> int:
     probs = torch.sigmoid(all_logits)
     gold_cats = []
     for i in range(all_labels.size(0)):
-        gold_cats.append({CATEGORY_LIST[j]
-                          for j in range(NUM_CATEGORIES)
+        gold_cats.append({category_list[j]
+                          for j in range(len(category_list))
                           if all_labels[i, j] == 1})
     best_k = 1
     best_f1 = -1.0
     for k in k_range:
-        pred_cats = apply_topk(all_logits, k)
+        pred_cats = apply_topk(all_logits, k, category_list=category_list)
         m = category_f1(pred_cats, gold_cats)
         if m["f1"] > best_f1:
             best_f1 = m["f1"]
@@ -105,10 +110,11 @@ def tune_topk(all_logits: torch.Tensor,
     return best_k
 
 
-def apply_topk(logits: torch.Tensor, k: int) -> list[set[str]]:
+def apply_topk(logits: torch.Tensor, k: int,
+               category_list: list[str] = CATEGORY_LIST) -> list[set[str]]:
     probs = torch.sigmoid(logits)
     topk_indices = probs.topk(min(k, probs.size(1)), dim=1).indices
-    return [{CATEGORY_LIST[j] for j in topk_indices[i].tolist()}
+    return [{category_list[j] for j in topk_indices[i].tolist()}
             for i in range(probs.size(0))]
 
 
@@ -116,7 +122,8 @@ class CategoryTrainer:
     def __init__(self, model, optimizer, scheduler, device,
                  patience: int = 5, grad_clip: float = 1.0,
                  log_path: str = "", use_fp16: bool = False,
-                 grad_accum_steps: int = 1):
+                 grad_accum_steps: int = 1,
+                 category_list: list[str] | None = None):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -127,6 +134,7 @@ class CategoryTrainer:
         self.grad_accum_steps = grad_accum_steps
         self.use_fp16 = use_fp16 and device == "cuda"
         self.scaler = GradScaler("cuda") if self.use_fp16 else None
+        self.category_list = category_list or CATEGORY_LIST
 
     def _run_batch(self, batch):
         batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
@@ -227,11 +235,13 @@ class CategoryTrainer:
         all_labels = torch.cat(all_labels, dim=0)
 
         thresholds = _tune_thresholds(all_logits, all_labels)
-        pred_cats = _apply_thresholds(all_logits, thresholds)
-        
+        pred_cats = _apply_thresholds(all_logits, thresholds,
+                                      category_list=self.category_list)
+
         gold_cats = []
         for i in range(all_labels.size(0)):
-            cats = {CATEGORY_LIST[j] for j in range(NUM_CATEGORIES) if all_labels[i, j] == 1}
+            cats = {self.category_list[j] for j in range(len(self.category_list))
+                    if all_labels[i, j] == 1}
             gold_cats.append(cats)
 
         cat_m = category_f1(pred_cats, gold_cats)

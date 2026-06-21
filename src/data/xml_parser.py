@@ -41,7 +41,7 @@ def parse_semeval_xml(path: str) -> list[dict]:
     return results
 
 
-def parse_mams_xml(path: str) -> list[dict]:
+def parse_mams_xml(path: str, map_categories: bool = True) -> list[dict]:
     tree = etree.parse(path)
     root = tree.getroot()
     results = []
@@ -57,12 +57,14 @@ def parse_mams_xml(path: str) -> list[dict]:
                 if pol == "conflict":
                     continue
                 cat = ac.get("category")
-                mapped_cat = MAMS_TO_SEMEVAL.get(cat)
-                if mapped_cat is None:
-                    continue
+                if map_categories:
+                    mapped_cat = MAMS_TO_SEMEVAL.get(cat)
+                    if mapped_cat is None:
+                        continue
+                    cat = mapped_cat
                 opinions.append({
                     "target": None,
-                    "category": mapped_cat,
+                    "category": cat,
                     "polarity": pol,
                     "from_char": 0,
                     "to_char": 0,

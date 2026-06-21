@@ -9,7 +9,8 @@ from src.data.xml_parser import parse_mams_xml
 from src.data.dedup import deduplicate_opinions
 from src.data.cls_builder import build_cls_records
 from src.data.contrastive_builder import build_contrastive_triplets
-from src.data.category_builder import build_category_records, build_sentiment_records
+from src.data.category_builder import (
+    build_category_records, build_sentiment_records, MAMS_CATEGORY_LIST)
 from src.data.mams_mapping import MAMS_TRAIN_XML, MAMS_VAL_XML, MAMS_TEST_XML
 from src.utils.io import write_jsonl
 
@@ -35,7 +36,7 @@ def main():
             logger.error("MAMS file not found: %s", full_path)
             sys.exit(1)
 
-        parsed = parse_mams_xml(full_path)
+        parsed = parse_mams_xml(full_path, map_categories=False)
         parsed, stats = deduplicate_opinions(parsed)
         logger.info("MAMS %s (split=%s): %d sentences, %d opinions "
                      "(dedup: %d dup removed, %d conflicts dropped)",
@@ -46,8 +47,10 @@ def main():
         cls = build_cls_records(parsed, split=split)
         all_cls.extend(cls)
 
-        cat_records = build_category_records(parsed, split=split)
-        sent_records = build_sentiment_records(parsed, split=split)
+        cat_records = build_category_records(parsed, split=split,
+                                             category_list=MAMS_CATEGORY_LIST)
+        sent_records = build_sentiment_records(parsed, split=split,
+                                               category_list=MAMS_CATEGORY_LIST)
         all_category.extend(cat_records)
         all_sentiment.extend(sent_records)
 
