@@ -9,7 +9,7 @@
   "enable_internet": true,
   "dataset_sources": [
     "duclm318/semeval-2014-absa-restaurant",
-    "duclm318/p5-embed-v6-sem"
+    "duclm318/p5-embed-v6-mams"
   ],
   "competition_sources": [],
   "kernel_sources": []
