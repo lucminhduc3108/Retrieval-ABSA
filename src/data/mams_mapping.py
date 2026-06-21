@@ -1,5 +1,6 @@
 MAMS_TRAIN_XML = "data/mams/data/MAMS-ACSA/raw/train.xml"
 MAMS_VAL_XML = "data/mams/data/MAMS-ACSA/raw/val.xml"
+MAMS_TEST_XML = "data/mams/data/MAMS-ACSA/raw/test.xml"
 
 MAMS_TO_SEMEVAL = {
     "food": "food",
