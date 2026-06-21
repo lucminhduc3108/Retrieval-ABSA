@@ -1,5 +1,5 @@
 {
-  "id": "lcminhc/p5-nb2-stage2-train",
+  "id": "duclm318/p5-nb2-stage2-train",
   "title": "P5 NB2 Stage2 Train",
   "code_file": "p5_nb2_stage2.ipynb",
   "language": "python",
@@ -8,8 +8,8 @@
   "enable_gpu": true,
   "enable_internet": true,
   "dataset_sources": [
-    "lcminhc/p5-nb1-stage1",
-    "lcminhc/p5-embed-v4"
+    "duclm318/semeval-2014-absa-restaurant",
+    "duclm318/p5-embed-v6-sem"
   ],
   "competition_sources": [],
   "kernel_sources": []
