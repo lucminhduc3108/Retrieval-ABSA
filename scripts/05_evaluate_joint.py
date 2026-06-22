@@ -20,8 +20,9 @@ from src.absa.category_trainer import (
 from src.absa.sentiment_dataset import SentimentDataset
 from src.absa.sentiment_model import SentimentPredictor
 from src.data.category_builder import (
-    CATEGORY_LIST, CAT2IDX, NUM_CATEGORIES, POL2ID,
+    CATEGORY_LIST, CAT2IDX, NUM_CATEGORIES, POL2ID, get_category_config,
 )
+from src.data.xml_parser import MAMS_TO_SEMEVAL
 from src.embedding.model import ContrastiveEmbedder
 from src.evaluation.category_metrics import (
     category_f1, per_category_f1,
@@ -40,6 +41,14 @@ ID2POL = {v: k for k, v in POL2ID.items()}
 
 STRATEGIES = ["per_category", "global", "topk"]
 
+CATEGORY_MAPS = {
+    "mams_to_semeval": MAMS_TO_SEMEVAL,
+}
+
+
+def _map_cat_sets(cats_list: list[set[str]], mapping: dict) -> list[set[str]]:
+    return [{mapping.get(c, c) for c in cats} for cats in cats_list]
+
 
 def collect_logits(model, dataset, device, batch_size=32):
     loader = DataLoader(dataset, batch_size=batch_size)
@@ -54,18 +63,19 @@ def collect_logits(model, dataset, device, batch_size=32):
     return torch.cat(all_logits, dim=0)
 
 
-def decode_categories(logits, strategy, val_logits, val_labels):
+def decode_categories(logits, strategy, val_logits, val_labels,
+                      category_list=CATEGORY_LIST):
     if strategy == "per_category":
         thresholds = _tune_thresholds(val_logits, val_labels)
-        pred_cats = _apply_thresholds(logits, thresholds)
+        pred_cats = _apply_thresholds(logits, thresholds, category_list=category_list)
         info = f"per-cat thresholds: {[f'{t:.2f}' for t in thresholds]}"
     elif strategy == "global":
         threshold = _tune_global_threshold(val_logits, val_labels)
-        pred_cats = _apply_global_threshold(logits, threshold)
+        pred_cats = _apply_global_threshold(logits, threshold, category_list=category_list)
         info = f"global threshold: {threshold:.2f}"
     elif strategy == "topk":
-        k = tune_topk(val_logits, val_labels)
-        pred_cats = apply_topk(logits, k)
+        k = tune_topk(val_logits, val_labels, category_list=category_list)
+        pred_cats = apply_topk(logits, k, category_list=category_list)
         info = f"k={k}"
     else:
         raise ValueError(f"Unknown strategy: {strategy}")
@@ -192,7 +202,7 @@ def run_joint_eval(pred_cats_list, test_cat, gold_cats_list, gold_pairs_list,
                    s2_model, retriever, embedding_model, store_vectors,
                    s2_cfg, ret_cfg, use_retrieval, device,
                    agreement_filter=False, diagnostic_out=None,
-                   gold_by_sent_cat=None):
+                   gold_by_sent_cat=None, **kwargs):
     stage2_records = []
     for cr, pred_cats in zip(test_cat, pred_cats_list):
         for cat in sorted(pred_cats):
@@ -237,11 +247,13 @@ def run_joint_eval(pred_cats_list, test_cat, gold_cats_list, gold_pairs_list,
     cat_m = category_f1(pred_cats_list, gold_cats_list)
     joint_m = joint_category_sentiment_f1(pred_pairs_list, gold_pairs_list)
     sent_cond = sentiment_acc_given_correct_category(pred_pairs_list, gold_pairs_list)
-    per_cat = per_category_f1(pred_cats_list, gold_cats_list, CATEGORY_LIST)
+    report_cat_list = kwargs.get("report_category_list", CATEGORY_LIST)
+    per_cat = per_category_f1(pred_cats_list, gold_cats_list, report_cat_list)
     return cat_m, joint_m, sent_cond, per_cat
 
 
-def format_report(cat_m, joint_m, sent_cond, per_cat, strategy=None):
+def format_report(cat_m, joint_m, sent_cond, per_cat, strategy=None,
+                   category_list=CATEGORY_LIST):
     report = []
     header = "# Joint Evaluation Results"
     if strategy:
@@ -262,20 +274,21 @@ def format_report(cat_m, joint_m, sent_cond, per_cat, strategy=None):
     report.append("## Per-Category F1\n")
     report.append("| Category | P | R | F1 | Support |")
     report.append("|----------|---|---|----|----|")
-    for cat in CATEGORY_LIST:
+    for cat in category_list:
         m = per_cat[cat]
         report.append(f"| {cat} | {m['precision']:.3f} | {m['recall']:.3f} | {m['f1']:.3f} | {m['support']} |")
     return "\n".join(report)
 
 
-def log_sigmoid_stats(logits, label, threshold_info=""):
+def log_sigmoid_stats(logits, label, threshold_info="",
+                      category_list=CATEGORY_LIST):
     probs = torch.sigmoid(logits)
     logger.info("[%s] Sigmoid stats — mean=%.4f, std=%.4f, p50=%.4f, p90=%.4f, p95=%.4f %s",
                 label,
                 probs.mean().item(), probs.std().item(),
                 probs.quantile(0.5).item(), probs.quantile(0.9).item(),
                 probs.quantile(0.95).item(), threshold_info)
-    for j, cat in enumerate(CATEGORY_LIST):
+    for j, cat in enumerate(category_list):
         col = probs[:, j]
         logger.info("  %s: mean=%.4f, std=%.4f, max=%.4f",
                      cat, col.mean().item(), col.std().item(), col.max().item())
@@ -370,10 +383,23 @@ def main():
     parser.add_argument("--agreement_filter", action="store_true")
     parser.add_argument("--pred_strategy", default="all",
                         choices=["all"] + STRATEGIES)
+    parser.add_argument("--category_map", default=None,
+                        choices=list(CATEGORY_MAPS.keys()),
+                        help="Map Stage 1 predicted categories (e.g., mams_to_semeval)")
     args = parser.parse_args()
 
     s1_cfg = load_yaml(args.stage1_config)
     s2_cfg = load_yaml(args.stage2_config)
+
+    cat_list_name = s1_cfg.get("category_list_name", "semeval2014")
+    s1_category_list = get_category_config(cat_list_name)[0]
+    cat_mapping = CATEGORY_MAPS.get(args.category_map) if args.category_map else None
+    if cat_mapping:
+        report_category_list = CATEGORY_LIST
+        logger.info("Category mapping: %s (%d -> %d categories)",
+                    args.category_map, len(s1_category_list), len(report_category_list))
+    else:
+        report_category_list = s1_category_list
     use_retrieval = s2_cfg.get("use_retrieval", True) and not args.no_retrieval
     ret_cfg = load_yaml(args.retrieval_config) if use_retrieval else {"top_k": 0, "threshold": 0.0}
     set_seed(s1_cfg["seed"])
@@ -426,7 +452,7 @@ def main():
         logger.warning(
             "Re-tuned threshold (%.2f) differs from checkpoint (%.2f) — possible split mismatch",
             retune_threshold, ckpt_threshold)
-    log_sigmoid_stats(val_logits, "val")
+    log_sigmoid_stats(val_logits, "val", category_list=s1_category_list)
 
     # --- Load Stage 2 + retrieval ---
     embedding_model = None
@@ -479,7 +505,7 @@ def main():
     cat_ds = CategoryDataset(test_cat, tokenizer_name=s1_cfg["model_name"],
                              max_length=s1_cfg["max_seq_length"])
     test_logits = collect_logits(s1_model, cat_ds, device)
-    log_sigmoid_stats(test_logits, "test")
+    log_sigmoid_stats(test_logits, "test", category_list=s1_category_list)
 
     gold_by_sent_cat = {(r["sentence"], r["category"]): r["polarity"]
                         for r in test_sent}
@@ -492,26 +518,34 @@ def main():
     for strat in strategies:
         logger.info("--- Strategy: %s ---", strat)
         pred_cats, info = decode_categories(
-            test_logits, strat, val_logits, val_labels)
+            test_logits, strat, val_logits, val_labels,
+            category_list=s1_category_list)
+        if cat_mapping:
+            pred_cats = _map_cat_sets(pred_cats, cat_mapping)
+            gold_cats_list_eval = _map_cat_sets(gold_cats_list, cat_mapping)
+        else:
+            gold_cats_list_eval = gold_cats_list
         avg_preds = sum(len(s) for s in pred_cats) / max(len(pred_cats), 1)
         logger.info("[%s] %s, avg predicted cats/sentence: %.2f", strat, info, avg_preds)
 
         if args.agreement_filter and use_retrieval:
             diag_baseline = []
             cat_m_base, joint_m_base, sent_cond_base, per_cat_base = run_joint_eval(
-                pred_cats, test_cat, gold_cats_list, gold_pairs_list,
+                pred_cats, test_cat, gold_cats_list_eval, gold_pairs_list,
                 s2_model, retriever, embedding_model, store_vectors,
                 s2_cfg, ret_cfg, use_retrieval, device,
                 agreement_filter=False, diagnostic_out=diag_baseline,
-                gold_by_sent_cat=gold_by_sent_cat)
+                gold_by_sent_cat=gold_by_sent_cat,
+                report_category_list=report_category_list)
 
             diag_filtered = []
             cat_m, joint_m, sent_cond, per_cat = run_joint_eval(
-                pred_cats, test_cat, gold_cats_list, gold_pairs_list,
+                pred_cats, test_cat, gold_cats_list_eval, gold_pairs_list,
                 s2_model, retriever, embedding_model, store_vectors,
                 s2_cfg, ret_cfg, use_retrieval, device,
                 agreement_filter=True, diagnostic_out=diag_filtered,
-                gold_by_sent_cat=gold_by_sent_cat)
+                gold_by_sent_cat=gold_by_sent_cat,
+                report_category_list=report_category_list)
 
             filter_diag_text = format_agreement_diagnostic(
                 diag_baseline, diag_filtered)
@@ -541,9 +575,10 @@ def main():
             all_reports.append(filter_comp_text)
         else:
             cat_m, joint_m, sent_cond, per_cat = run_joint_eval(
-                pred_cats, test_cat, gold_cats_list, gold_pairs_list,
+                pred_cats, test_cat, gold_cats_list_eval, gold_pairs_list,
                 s2_model, retriever, embedding_model, store_vectors,
-                s2_cfg, ret_cfg, use_retrieval, device)
+                s2_cfg, ret_cfg, use_retrieval, device,
+                report_category_list=report_category_list)
 
         all_results[strat] = {
             "cat_f1": cat_m["f1"], "cat_p": cat_m["precision"], "cat_r": cat_m["recall"],
@@ -554,7 +589,8 @@ def main():
             "sent_correct": sent_cond["correct"], "sent_total": sent_cond["total"],
             "avg_preds": avg_preds, "info": info,
         }
-        report = format_report(cat_m, joint_m, sent_cond, per_cat, strategy=strat)
+        report = format_report(cat_m, joint_m, sent_cond, per_cat, strategy=strat,
+                               category_list=report_category_list)
         all_reports.append(report)
         logger.info("[%s] Cat F1=%.4f, Joint F1=%.4f, Sent Acc|CC=%.4f, Sent MacF1|CC=%.4f",
                     strat, cat_m["f1"], joint_m["f1"], sent_cond["accuracy"], sent_cond["macro_f1"])

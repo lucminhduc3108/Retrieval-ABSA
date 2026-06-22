@@ -1,0 +1,17 @@
+{
+  "id": "duclm318/p5-nb3-eval-mams",
+  "title": "P5 NB3 Eval MAMS",
+  "code_file": "p5_nb3_eval_mams.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "duclm318/p5-nb1-stage1-mams-data",
+    "duclm318/p5-nb2-stage2-mams",
+    "duclm318/p5-embed-v6-mams"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}
