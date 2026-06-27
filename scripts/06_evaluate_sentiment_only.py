@@ -113,7 +113,7 @@ def main():
     logger.info("Loading Stage 2 checkpoint: %s", args.stage2_ckpt)
     model.load_state_dict(torch.load(args.stage2_ckpt, map_location=device), strict=False)
     
-    trainer = SentimentTrainer(model=model, optimizer=None)
+    trainer = SentimentTrainer(model=model, optimizer=None, scheduler=None, device=device)
     metrics = trainer.evaluate(test_loader)
     
     print("\n" + "="*60)
