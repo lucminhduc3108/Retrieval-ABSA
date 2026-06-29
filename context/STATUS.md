@@ -1,6 +1,6 @@
 # Project Status — Retrieval-based ABSA
 
-**Last updated:** 2026-06-20
+**Last updated:** 2026-06-29
 
 ---
 
@@ -57,14 +57,14 @@ RD p=0.3 has best val metrics across the board, but **does not generalize to tes
 
 ### End-to-End Joint Evaluation (NB3 — Test Set, per-category threshold)
 
-| Metric | Ret (frozen, k=5) | Ret (aux, k=5) | Ret (aux, k=3) | **RD p=0.3** | No-Retrieval |
-|--------|-------------------|---------------|---------------|-------------|-------------|
+| Metric | Ret (frozen) | Ret (aux, k=3) | RD p=0.3 | Gate | No-Retrieval |
+|--------|-------------|---------------|----------|------|-------------|
 | Cat F1 | 0.8564 | 0.8564 | 0.8564 | 0.8564 | 0.8564 |
-| **Sent Acc\|CC** | 0.8058 (668) | 0.8396 (696) | 0.8492 (704) | 0.8420 (698) | **0.8987** (745) |
-| **Sent MacF1\|CC** | — | 0.7373 | 0.7456 | 0.7344 | **0.8022** |
-| **Joint F1** | 0.6901 | 0.7190 | 0.7273 | 0.7211 | **0.7696** |
+| **Sent Acc\|CC** | 0.8058 | 0.8492 (704) | 0.8420 | 0.8492 (704) | **0.8987** (745) |
+| **Sent MacF1\|CC** | — | 0.7456 | 0.7344 | 0.7540 | **0.8022** |
+| **Joint F1** | 0.6901 | 0.7273 | 0.7211 | 0.7273 | **0.7696** |
 
-**RD p=0.3 worse than aux loss k=3** despite best val MacF1 (0.9487). Retrieval still loses on test.
+Gate identical to aux loss (α≈const). RD p=0.3 worse than aux loss. **Retrieval still -4.2pp behind no-retrieval.**
 
 ### NB4 — Diagnostic Root Cause
 
@@ -175,6 +175,19 @@ A2+MAMS **worse than both** — cross-polarity on mixed domain introduces domain
 
 **Chosen embedding: MAMS (0.822)** — most balanced polarity matching for neg/neu (the hard classes).
 
+### Embedding v5 (2026-06-21): Architecture & Training Strategy
+
+3 experiments to break the 0.82 ceiling. All use MAMS polonly triplets (same as baseline).
+
+| Experiment | tau | proj_depth | Overall | pos | neg | neu | Δ overall |
+|------------|-----|-----------|---------|-----|-----|-----|-----------|
+| MAMS baseline | 0.07 | 1 | 0.822 | 0.905 | 0.695 | 0.545 | — |
+| tau=0.12 | 0.12 | 1 | 0.812 | 0.902 | 0.680 | 0.489 | -1.0pp |
+| deep proj (2L) | 0.07 | 2 | 0.821 | 0.897 | 0.715 | 0.534 | -0.1pp |
+| tau+deep combined | 0.12 | 2 | 0.816 | 0.898 | 0.697 | 0.530 | -0.6pp |
+
+**Conclusion:** 0.82 is the hard ceiling for contrastive DeBERTa + projection. Root cause: DeBERTa CLS encodes topic >> polarity. No projection head (shallow or deep) can invert this hierarchy. All embedding experiments concluded.
+
 ### New direction: Auxiliary loss on label_repr
 
 Embedding ceiling at ~0.82. Switching to fix Stage 2: add auxiliary CE loss directly on label_repr to force polarity_embedding to encode polarity. Gradient from aux loss ~29x stronger than indirect main CE path.
@@ -195,6 +208,19 @@ Embedding ceiling at ~0.82. Switching to fix Stage 2: add auxiliary CE loss dire
 - [x] MAMS (polonly, combined ~10K): test pol_match@5 = **0.822** (same as A2, but +4.1pp neg, +3.2pp neu)
 - [x] A2+MAMS (cross-polarity, combined ~10K): test pol_match@5 = **0.799** (worse — domain noise)
 
+### 2026-06-21
+- [x] Embedding v5: tau=0.12 (0.812), deep proj (0.821), combined (0.816) — all ≤ MAMS baseline (0.822)
+- [x] Perturbation flip=0.2, flip=0.4, Two-head λ=0.2, Perturb+Two-head — ALL failed to beat no-ret
+- [x] Embedding ceiling confirmed at 0.82 ± 0.01 — no hyperparameter/architecture fix helps
+- [x] Re-analysis: joint training v1/v2 DID have gradient flow via LearnableRetriever (all configs use it)
+- [x] v1 root cause: embedding_lr=5e-7 too small; v2 root cause: freeze→unfreeze distribution shift
+- [x] Dataset analysis: MAMS as augmentation causes gradient conflict (95.4% mixed-polarity sentences)
+- [x] MAMS polarity distribution inverted vs SemEval (neu=44% vs pos=62%), per-category mismatch in every category
+- [x] New experiment: train SemEval and MAMS independently, test on own test sets (see `COMPARE.md`)
+- [x] MAMS test.xml: 400 sentences, 760 opinions (pos=26%, neg=31%, neu=44%)
+- [ ] Implement `01_prepare_data_mams.py` + 6 MAMS configs
+- [ ] Train full pipeline on MAMS (embedding → Stage 1 → Stage 2 × 2 → eval)
+
 ### 2026-06-20
 - [x] NB2 retrained all 5 runs: Retrieval, No-Ret, Aux Loss, RD p=0.3, RD p=0.5
 - [x] RD p=0.3 best val MacF1=0.9487 (+1.9pp over aux loss), neu F1=0.906
@@ -208,8 +234,9 @@ Embedding ceiling at ~0.82. Switching to fix Stage 2: add auxiliary CE loss dire
 - [x] Implemented Learnable Gate (`RetrievalGate` in `sentiment_model.py`)
 - [x] Gate input: [cls (768), label_repr (64), mean_neighbor_score (1)] = 833 dims
 - [x] New config: `stage2_2014_gate.yaml` (gate + aux loss, no retrieval_dropout)
-- [x] Updated NB2 with gate training cells, NB3 with gate eval cells
-- [ ] Awaiting Kaggle training results
+- [x] Gate val MacF1=0.9026 (worse than aux loss 0.9235)
+- [x] Gate test: Joint F1=0.7273, Sent Acc=0.8492 — **identical to aux loss** (gate learned α≈const)
+- [x] Gate confirmed dead-end — does not discriminate per-instance
 
 ### 2026-06-19
 - [x] Embedding experiments concluded — MAMS chosen (0.822, most balanced)
@@ -263,35 +290,87 @@ Sent Macro F1|CC and Sent Macro R|CC added (commit `2def055`). NB3 now uses `per
 
 ## Next Actions
 
-### Adjusting how model uses retrieval (embedding ceiling at ~82% pol_match)
+### Summary: all approaches exhausted EXCEPT true joint training
 
-Embedding improvements exhausted (A2, MAMS, cross-polarity, joint training all tried). Core problem: pol_match@5 = 82% overall (pos 90%, neg 70%, neu 55%) — model blindly interpolates all neighbors including wrong-polarity ones.
+**Embedding improvements (ceiling 0.82 pol_match):**
 
-**Approach 1 (Agreement Filter) — DONE, insufficient:**
-- [x] Tested: only 12.4% of samples have disagreeing neighbors
-- [x] Result: +0.6pp Joint F1 (0.7221→0.7283), still -4.1pp behind no-ret
-- [x] Root cause: 87.6% unanimous neighbors, but **unanimous-wrong** is the real problem (43.6% for neutral)
-- [x] Conclusion: disagreement is NOT the bottleneck; positive-biased embedding is
+| Approach | pol_match@5 | Why failed |
+|----------|------------|------------|
+| Polonly (SemEval) | 0.775 | Projection head memorizes |
+| Cross-polarity A2 | 0.823 | CLS still topic-dominated |
+| MAMS (+3x data) | 0.822 | Same ceiling, different strengths |
+| A2+MAMS | 0.799 | Domain noise |
+| tau=0.12 | 0.812 | Softer softmax ≠ polarity signal |
+| Deep proj (2L) | 0.821 | Bottleneck at input, not capacity |
+| tau+deep combined | 0.816 | Two effects cancel out |
 
-**Approach 2 — Retrieval Dropout: FAILED**
-- [x] Implemented and tested p=0.3, p=0.5
-- [x] Best val (p=0.3 MacF1=0.9487) but test Joint F1=0.7211 (worse than aux loss)
-- [x] Dead-end: random dropout disabled at eval, missing rescaling, not quality-aware
+Root cause: DeBERTa CLS encodes topic >> polarity. Projection head cannot invert this hierarchy.
 
-**Approach 3 — Learnable Gate (implemented, awaiting Kaggle training):**
-- Gate α = σ(W·[cls (768), label_repr (64), mean_neighbor_score (1)]) → gated_repr = α·label_repr
-- Model learns per-instance when to trust retrieval vs ignore it
-- Key advantage: gate is ON at eval (learned parameter, not dropout)
-- Combined with aux loss (0.1) — aux loss improves label_repr, gate handles remaining errors
-- Init: bias=0.847 → α≈0.70 at start (avoids gate collapse)
-- Gate and retrieval_dropout are mutually exclusive
+**Stage 2 fixes (all lose to no-retrieval):**
 
-- [x] Implement Approach 3 (learnable gate) in `sentiment_model.py` — `RetrievalGate` class
-- [x] New config: `stage2_2014_gate.yaml`
-- [x] Updated NB2 (training cells) and NB3 (eval cells)
-- [ ] Train on Kaggle, compare
-- [ ] Target: Joint F1 > 0.7696 (beat no-retrieval baseline)
-- [ ] Kaggle account: `duclm318` (migrated from `lcminhc`)
+| Approach | Test Joint F1 | vs No-Ret | Why failed |
+|----------|-------------|-----------|------------|
+| Frozen retrieval | 0.6901 | -7.9pp | Wrong neighbors corrupt predictions |
+| Aux loss (best ret) | 0.7273 | -4.2pp | Better label_repr but can't fix wrong neighbors |
+| RD p=0.3 | 0.7211 | -4.9pp | Random, not quality-aware |
+| Gate | 0.7273 | -4.2pp | α≈const, no discrimination |
+| Agreement filter | 0.7283 | -4.1pp | 87.6% unanimous, filter useless |
+| Perturbation 0.2 | failed | — | Model can't separate real vs noisy signal |
+| Perturbation 0.4 | failed | — | Too much noise, ignores retrieval |
+| Two-head λ=0.2 | failed | — | Architecture cap insufficient |
+| Perturb+Two-head | failed | — | Two fixes don't stack |
+| **No-Retrieval** | **0.7696** | **—** | **Baseline winner** |
+
+**Joint training v1/v2 (gradient existed but misconfigured):**
+
+| | v1 | v2 |
+|---|---|---|
+| embedding_lr | 5e-7 | 5e-6 |
+| freeze_epochs | 3 | 2 |
+| cls_polarity_weight | 0 | 0.5 |
+| Result | Sent Acc 0.799 (worse) | Best at ep2 (frozen), sụp after unfreeze |
+| Root cause | lr too small → embedding barely changes | Distribution shift: model adapts to frozen embedding → unfreeze disrupts |
+
+Note: Earlier analysis that v1/v2 had "no gradient flow" was **wrong**. All configs use `LearnableRetriever`, which provides gradient: `loss → label_repr → scores = neighbor_vecs @ W(query_vec) → query_vec → embedding_model`.
+
+---
+
+### Next: Controlled Experiment — SemEval vs MAMS Independent (COMPARE.md)
+
+**Goal:** Isolate whether pol_match ceiling (0.82) and retrieval gap (-4.2pp) are dataset-driven or method-limited.
+
+**Design:** Train full pipeline independently on each dataset, test on own test set, identical architecture.
+
+| | SemEval 2014 | MAMS Standalone |
+|---|---|---|
+| Train | 3,044 sent / 3,516 ops | 3,549 sent / 6,924 ops (train+val merged) |
+| Test | 800 sent / 973 ops | 400 sent / 760 ops |
+| Polarity | pos=62%, neg=24%, neu=14% | pos=26%, neg=30%, **neu=44%** |
+| Mixed-polarity sentences | 4.5% | **95.4%** |
+| Data output | `data/processed/` (existing) | `data/processed_mams/` (new) |
+
+**Architecture (same for both):**
+- Embedding: DeBERTa + polonly + CLS polarity head, 2-stage training
+- Stage 1: Cat-Aware Attention + BCE
+- Stage 2: No-Retrieval (primary) + Retrieval+AuxLoss (secondary)
+
+**Implementation:**
+- [ ] Add `MAMS_TEST_XML` to `mams_mapping.py`
+- [ ] Create `scripts/01_prepare_data_mams.py`
+- [ ] Create 6 MAMS configs (embedding×2, stage1, stage2×2, retrieval)
+- [ ] Train full pipeline on MAMS (Kaggle)
+- [ ] Compare results: pol_match, Cat F1, Joint F1, retrieval gap, per-polarity F1
+
+**Expected outcomes:**
+- MAMS pol_match >> 82% → ceiling is dataset-driven (SemEval positive dominance)
+- MAMS pol_match ~ 82% → ceiling is method-limited (InfoNCE + projection head)
+- MAMS retrieval gap < -4.2pp → balanced polarity reduces retrieval harm
+
+---
+
+### Deferred: True Joint Training
+
+Joint training approaches (2-DeBERTa fix v2, Shared Backbone) deferred pending controlled experiment results. If MAMS shows method limitation, joint training may be irrelevant.
 
 ---
 
