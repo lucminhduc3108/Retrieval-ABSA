@@ -1,0 +1,17 @@
+{
+  "id": "duclm318/p5-nb6-examples",
+  "title": "P5 NB6 Label Interpolation Examples",
+  "code_file": "p5_nb6_examples.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "duclm318/p5-nb1-stage1",
+    "duclm318/p5-embed-v4",
+    "duclm318/stage2-sem14-eval-checkpoints"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}
